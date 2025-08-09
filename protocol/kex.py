@@ -1,12 +1,10 @@
 import base64
 import socket
-import os
-from Crypto.Cipher import ChaCha20
-from Crypto.Hash import Poly1305, SHA512
+
+from Crypto.Hash import SHA512
 from Crypto.Protocol.DH import key_agreement
-from Crypto.PublicKey import ECC
 from Crypto.Protocol.KDF import HKDF
-from Crypto.Hash import SHA256, SHA512
+from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
 
 CHACHA20_KEY_SIZE_BYTES = 32
@@ -38,7 +36,7 @@ def client_to_server(s: socket.socket, host_public_key: bytes | None):
     Performs X25519 from client side
     :param s: TCP connection to remote host.
     :param host_public_key: Public key of remote host
-    :return: (k_1, k_2, host_pub_key), where derived_key is a tuple of 2 256 bits byte string.
+    :returns: (k_1, k_2, host_pub_key), where derived_key is a tuple of 2 256 bits byte string.
     :raises KexError: If signature is invalid or public keys sent by remote host is invalid
     """
     eph_priv = ECC.generate(curve="ed25519")
@@ -76,6 +74,7 @@ def server_to_client(s: socket.socket, priv_key: ECC.EccKey):
     Performs X25519 from host side
     :param s: TCP connection to client
     :param priv_key: Private key of the host
+    :returns: k_1, k_2
     :raises KexError: If ephemeral public key sent by the client is invalid
     """
     k_s = priv_key.public_key()
@@ -93,3 +92,5 @@ def server_to_client(s: socket.socket, priv_key: ECC.EccKey):
         k_s.export_key(format="raw") + q_c.export_key(format="raw") + q_s.export_key(format="raw") + k[0] + k[1])
     signer = eddsa.new(priv_key, "rfc8032")
     s.sendall(k_s.export_key(format="raw") + q_s.export_key(format="raw") + signer.sign(h))
+
+    return k[0], k[1]
