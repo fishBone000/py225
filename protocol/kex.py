@@ -7,6 +7,8 @@ from Crypto.Protocol.KDF import HKDF
 from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
 
+from protocol import util
+
 CHACHA20_KEY_SIZE_BYTES = 32
 CHACHA20_POLY1305_KEY_SIZE_BYTES = 64
 ED25519_KEY_SIZE_BYTES = 32
@@ -17,13 +19,6 @@ SHA512_SIZE_BYTES = 64
 
 class KexError(Exception):
     pass
-
-
-def _recv_full(s: socket.socket, count):
-    data = b''
-    while len(data) < count:
-        data += s.recv(count - len(data))
-    return data
 
 
 def _import_raw_ed25519_public_key(b: bytes):
@@ -44,7 +39,7 @@ def client_to_server(s: socket.socket, host_public_key: bytes | None):
     s.sendall(q_c.export_key(format="DER"))
 
     # K_S, Q_S, signature on hash
-    resp = _recv_full(s, 2 * ED25519_KEY_SIZE_BYTES + ED25519_ECDSA_SIZE_BYTES)
+    resp = util.recv_full(s, 2 * ED25519_KEY_SIZE_BYTES + ED25519_ECDSA_SIZE_BYTES)
     try:
         k_s = _import_raw_ed25519_public_key(resp[:ED25519_KEY_SIZE_BYTES])
     except ValueError as e:
@@ -78,7 +73,7 @@ def server_to_client(s: socket.socket, priv_key: ECC.EccKey):
     :raises KexError: If ephemeral public key sent by the client is invalid
     """
     k_s = priv_key.public_key()
-    buf = _recv_full(s, ED25519_KEY_SIZE_BYTES)
+    buf = util.recv_full(s, ED25519_KEY_SIZE_BYTES)
     try:
         q_c = _import_raw_ed25519_public_key(buf)
     except ValueError as e:
