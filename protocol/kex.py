@@ -21,11 +21,6 @@ class KexError(Exception):
     pass
 
 
-def _import_raw_ed25519_public_key(b: bytes):
-    x, y = ECC._import_ed25519_public_key(b)
-    return ECC.construct(curve="Ed25519", point_x=x, point_y=y)
-
-
 def client_to_server(s: socket.socket, host_public_key: bytes | None):
     """
     Performs X25519 from client side
@@ -41,7 +36,7 @@ def client_to_server(s: socket.socket, host_public_key: bytes | None):
     # K_S, Q_S, signature on hash
     resp = util.recv_full(s, 2 * ED25519_KEY_SIZE_BYTES + ED25519_ECDSA_SIZE_BYTES)
     try:
-        k_s = _import_raw_ed25519_public_key(resp[:ED25519_KEY_SIZE_BYTES])
+        k_s = util.import_raw_ed25519_public_key(resp[:ED25519_KEY_SIZE_BYTES])
     except ValueError as e:
         raise KexError("bad host public key format") from e
     if host_public_key is not None and host_public_key != resp[:ED25519_KEY_SIZE_BYTES]:
@@ -49,7 +44,7 @@ def client_to_server(s: socket.socket, host_public_key: bytes | None):
             f"received raw host key is: {base64.b64encode(resp[:ED25519_KEY_SIZE_BYTES])}")
 
     try:
-        q_s = _import_raw_ed25519_public_key(resp[ED25519_KEY_SIZE_BYTES:2 * ED25519_KEY_SIZE_BYTES])
+        q_s = util.import_raw_ed25519_public_key(resp[ED25519_KEY_SIZE_BYTES:2 * ED25519_KEY_SIZE_BYTES])
     except ValueError as e:
         raise KexError("bad ephemeral public key format") from e
     sign = resp[2 * ED25519_KEY_SIZE_BYTES:]
@@ -75,7 +70,7 @@ def server_to_client(s: socket.socket, priv_key: ECC.EccKey):
     k_s = priv_key.public_key()
     buf = util.recv_full(s, ED25519_KEY_SIZE_BYTES)
     try:
-        q_c = _import_raw_ed25519_public_key(buf)
+        q_c = util.import_raw_ed25519_public_key(buf)
     except ValueError as e:
         raise KexError("bad ephemeral public key format") from e
 
