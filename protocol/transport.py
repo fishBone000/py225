@@ -116,29 +116,32 @@ class TCPTransport:
             raise ValueError("packet too large")
         if self.broken:
             raise RuntimeError("broken transport")
-        if self.snd_nonce - self.initial_snd_nonce >= TCP_NONCE_STEP_SZ:
+        if self.snd_nonce is not None and self.snd_nonce - self.initial_snd_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
             self.s.close()
             raise NonceDepletedError
 
         data = b''
-        nonce_buf = None
         # If it's the first packet, generate a nonce and send encrypted nonce first
         if self.snd_nonce is None:
             self.initial_snd_nonce = self.snd_nonce = self.mng.send()
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
             data += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
+            data += Poly1305.new(self.k_1, ChaCha20, nonce_buf, data).digest()
+
+            self.snd_nonce += 1
+
+        begin_sign = len(data)
 
         # Encrypt the packet
-        if nonce_buf is None:
-            nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big", signed=False)
+        nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
         header_chacha = ChaCha20.new(self.k_1, nonce_buf)
         data_chacha = ChaCha20.new(self.k_2, nonce_buf)
 
         data += header_chacha.encrypt(len(b).to_bytes(HEADER_SIZE_BYTES, byteorder="big"))
         data += data_chacha.encrypt(b)
-        data += Poly1305.new(self.k_2, ChaCha20, nonce_buf, data).digest()
+        data += Poly1305.new(self.k_2, ChaCha20, nonce_buf, data[begin_sign:]).digest()
 
         try:
             self.s.sendall(data)
@@ -151,33 +154,37 @@ class TCPTransport:
     def recv(self) -> bytes:
         if self.broken:
             raise RuntimeError("broken transport")
-        if self.rcv_nonce - self.initial_rcv_nonce >= TCP_NONCE_STEP_SZ:
+        if self.rcv_nonce is not None and self.rcv_nonce - self.initial_rcv_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
             self.s.close()
             raise NonceDepletedError
 
         ciphertext = b''
-        nonce_buf = None
         # If it's the first packet, receive encrypted nonce first
         if self.rcv_nonce is None:
             try:
-                buf = recv_full(self.s, AES_BLOCK_SIZE_BYTES)
+                buf = recv_full(self.s, AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES)
             except:
                 self.broken = True
                 raise
-            ciphertext += buf
+
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
-            buf = aes.decrypt(buf)
-            nonce_buf = buf[-CHACHA20_NONCE_SIZE_BYTES:]
+            nonce_buf = aes.decrypt(buf[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
+            tag = buf[-POLY1305_TAG_SIZE_BYTES:]
+            expected = Poly1305.new(self.k_1, ChaCha20, nonce_buf, buf[:AES_BLOCK_SIZE_BYTES]).digest()
+            if not timingsafe_bcmp(tag, expected):
+                self.broken = True
+                self.s.close()
+                raise SecurityError("tag mismatch")
+
             nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
             if not self.mng.recv(nonce):
                 self.broken = True
                 self.s.close()
                 raise BadNonceError
-            self.initial_rcv_nonce = self.rcv_nonce = nonce
+            self.initial_rcv_nonce = self.rcv_nonce = nonce + 1
 
-        if nonce_buf is None:
-            nonce_buf = self.rcv_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big", signed=False)
+        nonce_buf = self.rcv_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big", signed=False)
         header_chacha = ChaCha20.new(self.k_1, nonce_buf)
         try:
             header = recv_full(self.s, HEADER_SIZE_BYTES)
