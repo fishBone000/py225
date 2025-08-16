@@ -231,7 +231,7 @@ class UDPPacket:
 
         aes = AES.new(self.k1, mode=AES.MODE_ECB)
         nonce_buf = nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
-        buf += aes.encrypt(nonce_buf)
+        buf += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
 
         data_chacha = ChaCha20.new(key=self.k2, nonce=nonce_buf)
 
@@ -249,7 +249,7 @@ class UDPPacket:
         nonce = int.from_bytes(nonce_buf, signed=False)
 
         tag = self.data[-POLY1305_TAG_SIZE_BYTES:]
-        expected = Poly1305.new(key=self.k2, cipher=ChaCha20, nonce=nonce_buf, data=self.data).digest()
+        expected = Poly1305.new(key=self.k2, cipher=ChaCha20, nonce=nonce_buf, data=self.data[:-POLY1305_TAG_SIZE_BYTES]).digest()
         if not timingsafe_bcmp(expected, tag):
             raise SecurityError("tag mismatch")
 
