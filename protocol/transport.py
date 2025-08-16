@@ -1,5 +1,6 @@
 import os
 import threading
+from dataclasses import dataclass
 from socket import socket
 
 from Crypto.Cipher import AES, ChaCha20
@@ -21,8 +22,14 @@ TCP_NONCE_STEPS = 2000
 class SecurityError(Exception):
     pass
 
+
 class NonceDepletedError(Exception):
     pass
+
+
+class BadNonceError(Exception):
+    pass
+
 
 class NonceManager:
     def __init__(self, step_sz, steps):
@@ -71,7 +78,6 @@ class NonceManager:
             except KeyError:
                 return False
             return True
-
 
     def send(self) -> int:
         with self.send_lock:
@@ -122,7 +128,7 @@ class TCPTransport:
             self.initial_snd_nonce = self.snd_nonce = self.mng.send()
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
-            data += aes.encrypt(nonce_buf)
+            data += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
 
         # Encrypt the packet
         if nonce_buf is None:
@@ -162,12 +168,12 @@ class TCPTransport:
             ciphertext += buf
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             buf = aes.decrypt(buf)
-            nonce_buf = buf[:CHACHA20_NONCE_SIZE_BYTES]
-            nonce = int.from_bytes(nonce_buf, byteorder="little", signed=False)
+            nonce_buf = buf[-CHACHA20_NONCE_SIZE_BYTES:]
+            nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
             if not self.mng.recv(nonce):
                 self.broken = True
                 self.s.close()
-                raise RuntimeError("bad nonce")
+                raise BadNonceError
             self.initial_rcv_nonce = self.rcv_nonce = nonce
 
         if nonce_buf is None:
@@ -202,3 +208,45 @@ class TCPTransport:
         self.rcv_nonce += 1
 
         return plain
+
+
+@dataclass
+class UDPPacket:
+    data: bytes
+    k1: bytes
+    k2: bytes
+    nonce_mng: NonceManager
+
+    def build(self) -> bytes:
+        nonce = self.nonce_mng.send()
+        buf = b""
+
+        aes = AES.new(self.k1, mode=AES.MODE_ECB)
+        nonce_buf = nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
+        buf += aes.encrypt(nonce_buf)
+
+        data_chacha = ChaCha20.new(self.k2, nonce_buf)
+
+        buf += data_chacha.encrypt(self.data)
+        buf += Poly1305.new(self.k2, ChaCha20, nonce_buf, buf).digest()
+
+        return buf
+
+    def parse(self):
+        if len(self.data) <= AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES:
+            raise ValueError("bad format")
+
+        aes = AES.new(self.k1, mode=AES.MODE_ECB)
+        nonce_buf = aes.decrypt(self.data[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
+        nonce = int.from_bytes(nonce_buf, signed=False)
+
+        tag = self.data[-POLY1305_TAG_SIZE_BYTES:]
+        expected = Poly1305.new(self.k2, ChaCha20, nonce_buf, self.data).digest()
+        if not timingsafe_bcmp(expected, tag):
+            raise SecurityError("tag mismatch")
+
+        if not self.nonce_mng.recv(nonce):
+            raise BadNonceError
+
+        chacha = ChaCha20.new(self.k2, nonce_buf)
+        return chacha.decrypt(self.data[AES_BLOCK_SIZE_BYTES:-POLY1305_TAG_SIZE_BYTES])
