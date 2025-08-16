@@ -7,6 +7,7 @@ from Crypto.Cipher import AES, ChaCha20
 from Crypto.Hash import Poly1305
 
 from protocol.util import recv_full, timingsafe_bcmp
+from protocol.kex import CHACHA20_KEY_SIZE_BYTES
 
 CHACHA20_NONCE_SIZE_BYTES = 12
 POLY1305_KEY_SIZE_BYTES = 32
@@ -82,7 +83,7 @@ class NonceManager:
     def gen_send(self) -> int:
         with self.send_lock:
             nonce = self.next_send
-            self.send_lock += self.step_sz
+            self.next_send += self.step_sz
             return nonce
 
     @classmethod
@@ -99,8 +100,8 @@ class NonceManager:
 # TODO: mem operation can be optimized, e.g. r/w on single bytearray instance?
 class TCPTransport:
     def __init__(self, s: socket, k_1: bytes, k_2: bytes, mng: NonceManager):
-        if len(k_1) is not CHACHA20_NONCE_SIZE_BYTES or len(k_2) is not CHACHA20_NONCE_SIZE_BYTES:
-            raise ValueError(f"size of k_1 and k_2 must be {CHACHA20_NONCE_SIZE_BYTES} bytes")
+        if len(k_1) is not CHACHA20_KEY_SIZE_BYTES or len(k_2) is not CHACHA20_KEY_SIZE_BYTES:
+            raise ValueError(f"size of k_1 and k_2 must be {CHACHA20_KEY_SIZE_BYTES} bytes")
         self.s = s
         self.k_1 = k_1
         self.k_2 = k_2
@@ -128,7 +129,7 @@ class TCPTransport:
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
             data += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
-            data += Poly1305.new(self.k_1, ChaCha20, nonce_buf, data).digest()
+            data += Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf, data=data).digest()
 
             self.snd_nonce += 1
 
@@ -136,12 +137,12 @@ class TCPTransport:
 
         # Encrypt the packet
         nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
-        header_chacha = ChaCha20.new(self.k_1, nonce_buf)
-        data_chacha = ChaCha20.new(self.k_2, nonce_buf)
+        header_chacha = ChaCha20.new(key=self.k_1, nonce=nonce_buf)
+        data_chacha = ChaCha20.new(key=self.k_2, nonce=nonce_buf)
 
         data += header_chacha.encrypt(len(b).to_bytes(HEADER_SIZE_BYTES, byteorder="big"))
         data += data_chacha.encrypt(b)
-        data += Poly1305.new(self.k_2, ChaCha20, nonce_buf, data[begin_sign:]).digest()
+        data += Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=data[begin_sign:]).digest()
 
         try:
             self.s.sendall(data)
@@ -171,7 +172,7 @@ class TCPTransport:
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = aes.decrypt(buf[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
             tag = buf[-POLY1305_TAG_SIZE_BYTES:]
-            expected = Poly1305.new(self.k_1, ChaCha20, nonce_buf, buf[:AES_BLOCK_SIZE_BYTES]).digest()
+            expected = Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf, data=buf[:AES_BLOCK_SIZE_BYTES]).digest()
             if not timingsafe_bcmp(tag, expected):
                 self.broken = True
                 self.s.close()
@@ -185,7 +186,7 @@ class TCPTransport:
             self.initial_rcv_nonce = self.rcv_nonce = nonce + 1
 
         nonce_buf = self.rcv_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big", signed=False)
-        header_chacha = ChaCha20.new(self.k_1, nonce_buf)
+        header_chacha = ChaCha20.new(key=self.k_1, nonce=nonce_buf)
         try:
             header = recv_full(self.s, HEADER_SIZE_BYTES)
         except:
@@ -203,13 +204,13 @@ class TCPTransport:
         tag = data[packet_sz:]
         ciphertext += payload
 
-        expected_tag = Poly1305.new(self.k_2, ChaCha20, nonce_buf, ciphertext).digest()
+        expected_tag = Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=ciphertext).digest()
         if not timingsafe_bcmp(tag, expected_tag):
             self.broken = True
             self.s.close()
             raise SecurityError("tag mismatch")
 
-        data_chacha = ChaCha20.new(self.k_2, nonce_buf)
+        data_chacha = ChaCha20.new(key=self.k_2, nonce=nonce_buf)
         plain = data_chacha.decrypt(payload)
 
         self.rcv_nonce += 1
@@ -232,10 +233,10 @@ class UDPPacket:
         nonce_buf = nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
         buf += aes.encrypt(nonce_buf)
 
-        data_chacha = ChaCha20.new(self.k2, nonce_buf)
+        data_chacha = ChaCha20.new(key=self.k2, nonce=nonce_buf)
 
         buf += data_chacha.encrypt(self.data)
-        buf += Poly1305.new(self.k2, ChaCha20, nonce_buf, buf).digest()
+        buf += Poly1305.new(key=self.k2, cipher=ChaCha20, nonce=nonce_buf, data=buf).digest()
 
         return buf
 
@@ -248,12 +249,12 @@ class UDPPacket:
         nonce = int.from_bytes(nonce_buf, signed=False)
 
         tag = self.data[-POLY1305_TAG_SIZE_BYTES:]
-        expected = Poly1305.new(self.k2, ChaCha20, nonce_buf, self.data).digest()
+        expected = Poly1305.new(key=self.k2, cipher=ChaCha20, nonce=nonce_buf, data=self.data).digest()
         if not timingsafe_bcmp(expected, tag):
             raise SecurityError("tag mismatch")
 
         if not self.nonce_mng.check_recv(nonce):
             raise BadNonceError
 
-        chacha = ChaCha20.new(self.k2, nonce_buf)
+        chacha = ChaCha20.new(key=self.k2, nonce=nonce_buf)
         return chacha.decrypt(self.data[AES_BLOCK_SIZE_BYTES:-POLY1305_TAG_SIZE_BYTES])
