@@ -38,7 +38,8 @@ class ServerRecord(yaml.YAMLObject):
 @dataclass
 class Client(yaml.YAMLObject):
     servers: list[ServerRecord]
-    log: list[str]
+    log: str
+    verbosity: str
     private_key: EccKey | None = field(repr=False)
     yaml_loader = yaml.SafeLoader
     yaml_tag = "!Client"
