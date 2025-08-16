@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yaml
 from Crypto.PublicKey import ECC
@@ -9,7 +9,7 @@ from Crypto.PublicKey.ECC import EccKey
 class ServerRecord(yaml.YAMLObject):
     host: str
     port: int
-    private_key: EccKey | None = None
+    private_key: EccKey = field(repr=False)
     host_public_key: EccKey | None = None
     yaml_loader = yaml.SafeLoader
     yaml_tag = "!ServerRecord"
@@ -39,7 +39,7 @@ class ServerRecord(yaml.YAMLObject):
 class Client(yaml.YAMLObject):
     servers: list[ServerRecord]
     log: list[str]
-    private_key: EccKey | None
+    private_key: EccKey | None = field(repr=False)
     yaml_loader = yaml.SafeLoader
     yaml_tag = "!Client"
 
