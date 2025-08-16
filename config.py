@@ -1,4 +1,7 @@
+import os
+import sys
 from dataclasses import dataclass, field
+from typing import Literal
 
 import yaml
 from Crypto.PublicKey import ECC
@@ -61,3 +64,31 @@ class Client(yaml.YAMLObject):
                     raise ValueError(f"no private key specified for {rec.host} port {rec.port}")
                 if self.private_key is not None:
                     rec.private_key = self.private_key
+
+
+def get_default_cfg_paths(name: Literal["py225", "py225d", "py225-gui"]) -> list[str]:
+    dirs = []
+    match sys.platform:
+        case "linux":
+            if os.getenv("XDG_DATA_HOME"):
+                dirs.append(os.getenv("XDG_DATA_HOME") + "/py225")
+            elif os.getenv("HOME"):
+                dirs.append(os.getenv("HOME") + "/.local/share/py225")
+        case "win32":
+            if os.getenv("LocalAppData"):
+                dirs.append(os.getenv("LocalAppData") + "\\py225")
+    dirs.append(os.getcwd())
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 或类似工具生成的 exe 路径
+        dirs.append(os.path.dirname(sys.executable))
+    else:
+        # 普通脚本运行时，获取当前脚本的绝对路径
+        script_path = os.path.abspath(sys.argv[0])
+        dirs.append(os.path.dirname(script_path))
+
+    paths = []
+    for dir in dirs:
+        paths.append(os.path.join(dir, name + ".yaml"))
+        paths.append(os.path.join(dir, name + ".yml"))
+
+    return paths
