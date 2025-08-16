@@ -44,7 +44,7 @@ class NonceManager:
         self.send_lock = threading.Lock()
         self.next_send = 0
 
-    def recv(self, n):
+    def check_recv(self, n):
         with self.recv_lock:
             if n % self.step_sz != 0:
                 raise ValueError("bad nonce")
@@ -79,7 +79,7 @@ class NonceManager:
                 return False
             return True
 
-    def send(self) -> int:
+    def gen_send(self) -> int:
         with self.send_lock:
             nonce = self.next_send
             self.send_lock += self.step_sz
@@ -124,7 +124,7 @@ class TCPTransport:
         data = b''
         # If it's the first packet, generate a nonce and send encrypted nonce first
         if self.snd_nonce is None:
-            self.initial_snd_nonce = self.snd_nonce = self.mng.send()
+            self.initial_snd_nonce = self.snd_nonce = self.mng.gen_send()
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
             data += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
@@ -178,7 +178,7 @@ class TCPTransport:
                 raise SecurityError("tag mismatch")
 
             nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
-            if not self.mng.recv(nonce):
+            if not self.mng.check_recv(nonce):
                 self.broken = True
                 self.s.close()
                 raise BadNonceError
@@ -225,7 +225,7 @@ class UDPPacket:
     nonce_mng: NonceManager
 
     def build(self) -> bytes:
-        nonce = self.nonce_mng.send()
+        nonce = self.nonce_mng.gen_send()
         buf = b""
 
         aes = AES.new(self.k1, mode=AES.MODE_ECB)
@@ -252,7 +252,7 @@ class UDPPacket:
         if not timingsafe_bcmp(expected, tag):
             raise SecurityError("tag mismatch")
 
-        if not self.nonce_mng.recv(nonce):
+        if not self.nonce_mng.check_recv(nonce):
             raise BadNonceError
 
         chacha = ChaCha20.new(self.k2, nonce_buf)
