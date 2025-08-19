@@ -1,5 +1,7 @@
+import asyncio
 import os
 import threading
+from asyncio import AbstractEventLoop, StreamReader, StreamWriter
 from dataclasses import dataclass
 from socket import socket
 
@@ -99,10 +101,15 @@ class NonceManager:
 
 # TODO: mem operation can be optimized, e.g. r/w on single bytearray instance?
 class TCPTransport:
+    r: StreamReader | None
+    w: StreamWriter | None
+
     def __init__(self, s: socket, k_1: bytes, k_2: bytes, mng: NonceManager | None):
         if len(k_1) is not CHACHA20_KEY_SIZE_BYTES or len(k_2) is not CHACHA20_KEY_SIZE_BYTES:
             raise ValueError(f"size of k_1 and k_2 must be {CHACHA20_KEY_SIZE_BYTES} bytes")
         self.s = s
+        self.s.setblocking(False)
+        self.r, self.w = None, None
         self.k_1 = k_1
         self.k_2 = k_2
         self.mng = mng
@@ -118,7 +125,10 @@ class TCPTransport:
             self.initial_rcv_nonce = None
         self.broken = False
 
-    def sendall(self, b: bytes):
+    async def prepare_async(self):
+        self.r, self.w = await asyncio.open_connection(sock=self.s)
+
+    async def sendall(self, b: bytes):
         if len(b) > 0xFFFFFFFF:
             raise ValueError("packet too large")
         if self.broken:
@@ -127,6 +137,8 @@ class TCPTransport:
             self.broken = True
             self.s.close()
             raise NonceDepletedError
+        if self.w is None:
+            raise RuntimeError("transport not prepared for async, call prepare_async() first")
 
         data = b''
         # If it's the first packet, generate a nonce and send encrypted nonce first
@@ -151,14 +163,15 @@ class TCPTransport:
         data += Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=data[begin_sign:]).digest()
 
         try:
-            self.s.sendall(data)
+            self.w.write(data)
+            await self.w.drain()
         except:
             self.broken = True
             raise
 
         self.snd_nonce += 1
 
-    def recv(self) -> bytes:
+    async def recv(self) -> bytes:
         if self.broken:
             raise RuntimeError("broken transport")
         if self.rcv_nonce is not None and self.rcv_nonce - self.initial_rcv_nonce >= TCP_NONCE_STEP_SZ:
@@ -170,7 +183,7 @@ class TCPTransport:
         # If it's the first packet, receive encrypted nonce first
         if self.rcv_nonce is None:
             try:
-                buf = recv_full(self.s, AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES)
+                buf = await self.r.readexactly(AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES)
             except:
                 self.broken = True
                 raise
@@ -178,7 +191,8 @@ class TCPTransport:
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = aes.decrypt(buf[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
             tag = buf[-POLY1305_TAG_SIZE_BYTES:]
-            expected = Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf, data=buf[:AES_BLOCK_SIZE_BYTES]).digest()
+            expected = Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf,
+                                    data=buf[:AES_BLOCK_SIZE_BYTES]).digest()
             if not timingsafe_bcmp(tag, expected):
                 self.broken = True
                 self.s.close()
@@ -194,7 +208,7 @@ class TCPTransport:
         nonce_buf = self.rcv_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big", signed=False)
         header_chacha = ChaCha20.new(key=self.k_1, nonce=nonce_buf)
         try:
-            header = recv_full(self.s, HEADER_SIZE_BYTES)
+            header = await self.r.readexactly(HEADER_SIZE_BYTES)
         except:
             self.broken = True
             raise
@@ -202,7 +216,7 @@ class TCPTransport:
         packet_sz = int.from_bytes(header_chacha.decrypt(header), byteorder="big", signed=False)
 
         try:
-            data = recv_full(self.s, packet_sz + POLY1305_TAG_SIZE_BYTES)
+            data = await self.r.readexactly(packet_sz + POLY1305_TAG_SIZE_BYTES)
         except:
             self.broken = True
             raise
@@ -223,11 +237,11 @@ class TCPTransport:
 
         return plain
 
-    async def async_sendall(self, b: bytes):
-        self.sendall(b)
-
-    async def async_recv(self):
-        return self.recv()
+    def close(self):
+        if self.w is not None:
+            self.w.close()
+        else:
+            self.s.close()
 
 
 @dataclass
@@ -261,7 +275,8 @@ class UDPPacket:
         nonce = int.from_bytes(nonce_buf, signed=False)
 
         tag = self.data[-POLY1305_TAG_SIZE_BYTES:]
-        expected = Poly1305.new(key=self.k2, cipher=ChaCha20, nonce=nonce_buf, data=self.data[:-POLY1305_TAG_SIZE_BYTES]).digest()
+        expected = Poly1305.new(key=self.k2, cipher=ChaCha20, nonce=nonce_buf,
+                                data=self.data[:-POLY1305_TAG_SIZE_BYTES]).digest()
         if not timingsafe_bcmp(expected, tag):
             raise SecurityError("tag mismatch")
 

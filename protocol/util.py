@@ -1,12 +1,13 @@
+from asyncio import StreamReader
 from socket import socket
 
 from Crypto.PublicKey import ECC
 
 
-def recv_full(s: socket, count):
+async def recv_full(r: StreamReader, count):
     data = b''
     while len(data) < count:
-        data += s.recv(count - len(data))
+        data += r.readexactly(count - len(data))
     return data
 
 
@@ -15,7 +16,7 @@ def timingsafe_bcmp(a: bytes, b: bytes) -> bool:
     res = 0
     for i in range(len(a)):
         res |= a[i] ^ b[i]
-    return res is 0
+    return res == 0
 
 
 def import_raw_ed25519_public_key(b: bytes):
