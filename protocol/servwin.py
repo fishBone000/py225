@@ -29,18 +29,19 @@ def parse(data: bytes) -> (int, list[int]):
     return r.sec_til_expire, r.ports
 
 
-def query(host: str, port: int, priv_key: EccKey, host_pub_key: EccKey | None, nonce_mng: NonceManager) -> (int,
-                                                                                                            list[int]):
-    s = socket.create_connection((host, port), timeout=5)
-    (k1, k2, host_pub_key) = kex.client_to_server(s, host_pub_key)
-    tp = TCPTransport(s, k1, k2, nonce_mng)
+def query(addr: tuple[str, int],
+          priv_key: EccKey, host_pub_key: EccKey | None) -> (int, list[int], tuple[bytes, bytes]):
+    with socket.create_connection(addr, timeout=5) as s:
+        (k1, k2, host_pub_key) = kex.client_to_server(s, host_pub_key)
+        tp = TCPTransport(s, k1, k2, None)
 
-    # Do authentication
-    pub_key = priv_key.public_key()
-    signer = eddsa.new(priv_key, mode="rfc8032")
-    h = SHA512.new(k1 + k2 + pub_key.export_key(format="raw")).digest()
-    sign = signer.sign(h)
-    tp.sendall(pub_key.export_key(format="raw") + sign)
+        # Do authentication
+        pub_key = priv_key.public_key()
+        signer = eddsa.new(priv_key, mode="rfc8032")
+        h = SHA512.new(k1 + k2 + pub_key.export_key(format="raw")).digest()
+        sign = signer.sign(h)
+        tp.sendall(pub_key.export_key(format="raw") + sign)
 
-    data = tp.recv()
-    return parse(data)
+        data = tp.recv()
+        (exp, ports) = parse(data)
+    return exp, ports, k1, k2, host_pub_key

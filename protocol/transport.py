@@ -99,17 +99,23 @@ class NonceManager:
 
 # TODO: mem operation can be optimized, e.g. r/w on single bytearray instance?
 class TCPTransport:
-    def __init__(self, s: socket, k_1: bytes, k_2: bytes, mng: NonceManager):
+    def __init__(self, s: socket, k_1: bytes, k_2: bytes, mng: NonceManager | None):
         if len(k_1) is not CHACHA20_KEY_SIZE_BYTES or len(k_2) is not CHACHA20_KEY_SIZE_BYTES:
             raise ValueError(f"size of k_1 and k_2 must be {CHACHA20_KEY_SIZE_BYTES} bytes")
         self.s = s
         self.k_1 = k_1
         self.k_2 = k_2
         self.mng = mng
-        self.snd_nonce = None
-        self.initial_snd_nonce = None
-        self.rcv_nonce = None
-        self.initial_rcv_nonce = None
+        if mng is None:
+            self.snd_nonce = 0
+            self.initial_snd_nonce = 0
+            self.rcv_nonce = 0
+            self.initial_rcv_nonce = 0
+        else:
+            self.snd_nonce = None
+            self.initial_snd_nonce = None
+            self.rcv_nonce = None
+            self.initial_rcv_nonce = None
         self.broken = False
 
     def sendall(self, b: bytes):
@@ -216,6 +222,12 @@ class TCPTransport:
         self.rcv_nonce += 1
 
         return plain
+
+    async def async_sendall(self, b: bytes):
+        self.sendall(b)
+
+    async def async_recv(self):
+        return self.recv()
 
 
 @dataclass

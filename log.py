@@ -37,6 +37,8 @@ def setup(name: str, log_path: str | None, lvl: str | int | None) -> Logger:
             if sys.platform != "win32":
                 raise RuntimeError("only Windows systems support NT Event Log")
             handler = NTEventLogHandler(appname="py225")
+        case None:
+            handler = default_log_handler()
         case _:
             handler = FileHandler(log_path)
 

@@ -39,6 +39,26 @@ class TestTransport(unittest.TestCase):
             s1.close()
             s2.close()
 
+    def test_tcp_zero_nonce(self):
+        (s1, s2) = socket.socketpair()
+
+        k1 = os.urandom(CHACHA20_KEY_SIZE_BYTES)
+        k2 = os.urandom(CHACHA20_KEY_SIZE_BYTES)
+
+        t1 = TCPTransport(s1, k1, k2, None)
+        t2 = TCPTransport(s2, k1, k2, None)
+
+        try:
+            for i in range(1000):
+                with self.subTest(i=i):
+                    data = os.urandom(1 + int(random.random()*10000))
+                    t1.sendall(data)
+                    buf = t2.recv()
+                    self.assertEqual(data, buf)
+        finally:
+            s1.close()
+            s2.close()
+
     def test_udp(self):
         ((m1, m2), (k1, k2)) = prepare_key_and_mng()
 

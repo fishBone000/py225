@@ -43,6 +43,8 @@ class Client(yaml.YAMLObject):
     servers: list[ServerRecord]
     log: str
     verbosity: str
+    listen_ip: str
+    listen_port: int
     private_key: EccKey | None = field(repr=False)
     yaml_loader = yaml.SafeLoader
     yaml_tag = "!Client"
@@ -92,3 +94,25 @@ def get_default_cfg_paths(name: Literal["py225", "py225d", "py225-gui"]) -> list
         paths.append(os.path.join(dir, name + ".yml"))
 
     return paths
+
+def load(p, name):
+    paths = [p] if p is not None else get_default_cfg_paths(name)
+    loaded = False
+    for path in paths:
+        try:
+            with open(path) as f:
+                data = f.read()
+            cfg = yaml.safe_load(data)
+            if not isinstance(cfg, Client):
+                raise ValueError("Bad config format.")
+            loaded = True
+            break
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            e.add_note(f"When loading {path}")
+            raise
+
+    if not loaded:
+        raise FileNotFoundError(f"Config file not found in following paths: \n{"\n".join(paths)}")
+    return cfg
