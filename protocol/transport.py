@@ -101,15 +101,13 @@ class NonceManager:
 
 # TODO: mem operation can be optimized, e.g. r/w on single bytearray instance?
 class TCPTransport:
-    r: StreamReader | None
-    w: StreamWriter | None
+    r: StreamReader
+    w: StreamWriter
 
-    def __init__(self, s: socket, k_1: bytes, k_2: bytes, mng: NonceManager | None):
+    def __init__(self, rw: tuple[StreamReader, StreamWriter], k_1: bytes, k_2: bytes, mng: NonceManager | None):
         if len(k_1) is not CHACHA20_KEY_SIZE_BYTES or len(k_2) is not CHACHA20_KEY_SIZE_BYTES:
             raise ValueError(f"size of k_1 and k_2 must be {CHACHA20_KEY_SIZE_BYTES} bytes")
-        self.s = s
-        self.s.setblocking(False)
-        self.r, self.w = None, None
+        self.r, self.w = rw
         self.k_1 = k_1
         self.k_2 = k_2
         self.mng = mng
@@ -237,11 +235,9 @@ class TCPTransport:
 
         return plain
 
-    def close(self):
-        if self.w is not None:
-            self.w.close()
-        else:
-            self.s.close()
+    async def close(self):
+        self.w.close()
+        await self.w.wait_closed()
 
 
 @dataclass

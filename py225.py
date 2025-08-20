@@ -1,40 +1,35 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import random
 import socket
 import sys
 import threading
-import time
-from threading import Thread, Lock, Condition
+from datetime import datetime, timedelta
 from time import sleep
 from typing import Literal
-from datetime import datetime, timedelta
+from asyncio import Lock, create_task, Task
 
-import yaml
 from Crypto.PublicKey.ECC import EccKey
 
 import config
 import log
-from protocol import kex, servwin
+from protocol import servwin
 from protocol.transport import NonceManager, TCPTransport
 
 NAME: Literal["py225"] = "py225"
 
 
-class _Session(Thread):
+class _Session:
+    type session_info = tuple[datetime, list[int], NonceManager, NonceManager, bytes, bytes]
     expire: datetime
-    ports: list[int]
-    tcp_nonce_mng: NonceManager
-    udp_nonce_mng: NonceManager
-    k1: bytes
-    k2: bytes
-    ready: bool
 
     lock: Lock
-    on_updated: Condition
-    shall_renew: Condition
+    query_task: Task[session_info]
+    next_query_task: Task[session_info] | None
+    timer_task: Task
 
     MAX_RETRIES = 5
 
@@ -45,89 +40,72 @@ class _Session(Thread):
         self.private_key = private_key
         self.host_public_key = host_public_key
         self.lock = Lock()
-        self.on_updated = Condition()
-        self.shall_renew = Condition()
 
-    def get(self) -> tuple[list[int], NonceManager, NonceManager, bytes, bytes] | None:
-        """
-        Get session attributes
-        :return: (ports, TCP nonce manager, UDP nonce manager, K1, K2)
-        """
-        with self.lock:
-            if self.ready:
-                return self.ports, self.tcp_nonce_mng, self.udp_nonce_mng, self.k1, self.k2
-            else:
-                self.shall_renew.notify_all()
-                return None
+    def get(self) -> Task[session_info]:
+        if self.query_task is None:
+            self.query_task = create_task(self.query(), name=f"Query Task ({self.address})")
+            return self.query_task
+        else:
+            if not self.query_task.done() or self.query_task.exception() is None and not self.expired():
+                return self.query_task
+            if not self.next_query_task.done() or self.next_query_task.exception() is None:
+                self.query_task = self.next_query_task
+                self.next_query_task = None
+                return self.query_task
+            self.next_query_task = None
+            self.query_task = create_task(self.query(), name=f"Query Task ({self.address})")
+            return self.query_task
 
-    def wait_for_update(self, timeout):
-        return self.on_updated.wait(timeout)
+    def expired(self):
+        assert self.query_task.done() and self.query_task.exception() is None
+        return (datetime.now() - self.expire).total_seconds() >= 0
 
-    def renew(self, expire: datetime, ports: list[int], k1: bytes, k2: bytes):
-        with self.lock:
-            self.expire = expire
-            self.ports = ports
-            self.k1 = k1
-            self.k2 = k2
-            self.tcp_nonce_mng = NonceManager.new("tcp")
-            self.udp_nonce_mng = NonceManager.new("udp")
+    async def expire_timer(self):
+        exp = self.expire
 
-            self.ready = True
+        await asyncio.sleep((exp - timedelta(minutes=10) - datetime.now()).total_seconds())
 
-        threading.Thread(target=self.expire_timer).start()
+        new_task = create_task(self.query(), name=f"Query Task ({self.address})")
+        self.next_query_task = new_task
 
-        self.on_updated.notify_all()
+        await asyncio.sleep(60*5)
 
-    def expire_timer(self):
-        with self.lock:
-            k1 = self.k1
-            k2 = self.k2
-            exp = self.expire
+        if new_task.exception() is not None:
+            new_task = create_task(self.query(), name=f"Query Task ({self.address})")
+            self.next_query_task = new_task
 
-        sleep((exp - timedelta(minutes=10) - datetime.now()).total_seconds())
-        self.shall_renew.notify_all()
-
-        # Subtract 5 seconds to make a safe margin
-        renewed = self.wait_for_update((exp - datetime.now()).total_seconds() - 5)
-        if not renewed:
-            with self.lock:
-                if k1 != self.k1 or k2 != self.k2:
-                    self.ready = False
-                    self.shall_renew.notify_all()
-
-    def report_update_failed(self):
-        with self.lock:
-            if not self.ready:
-                self.on_updated.notify_all()
-
-    def run(self):
-        self.query()
-
-        while True:
-            self.shall_renew.wait()
-            self.query()
-
-    def query(self):
+    async def query(self) -> session_info:
         logging.info(f"Begin querying service window from {self.address[0]} port {self.address[1]}.")
         for retry in range(self.MAX_RETRIES + 1):
             try:
-                (expire, ports, k1, k2, _) = servwin.query(self.address,
-                                                           self.private_key,
-                                                           self.host_public_key)
+                (expire, ports, k1, k2, _) = await servwin.query(self.address,
+                                                                 self.private_key,
+                                                                 self.host_public_key)
+                ts = datetime.now() + timedelta(seconds=expire)
                 logging.info(f"Query service window from {self.address[0]} port {self.address[1]} success")
+
+                zis_task = asyncio.current_task()
+                assert zis_task is not None
+                self.query_task = zis_task
+                self.next_query_task = None
+                self.expire = ts
+                self.timer_task = create_task(self.expire_timer(), name="Expire Timer")
+
+                return ts, ports, NonceManager.new("tcp"), NonceManager.new("udp"), k1, k2
             except (TimeoutError, EOFError) as e:
                 if retry == self.MAX_RETRIES:
                     logging.error(f"Query service window from {self.address[0]} port {self.address[1]} failed: {e}. ")
+                    raise
                 else:
                     logging.warning(f"Query service window from {self.address[0]} port {self.address[1]} failed: {e}. "
                                     f"Retrying: {retry + 1}/{self.MAX_RETRIES}")
             except:
                 logging.error(f"Query service window from {self.address[0]} port {self.address[1]} failed.",
                               exc_info=True)
-                break
+                raise
 
-    def start_worker_thread(self):
-        self.start()
+        # Code shouldn't reach here, add raise to please IDE
+        raise RuntimeError("unexpected code path")
 
 
 class _Server:
@@ -135,7 +113,7 @@ class _Server:
         self.private_key = rec.private_key
         self.host_public_key = rec.host_public_key
         self.sess = _Session((rec.host, rec.port), rec.private_key, rec.host_public_key)
-        self.sess.start_worker_thread()
+        self.sess.get()
 
 
 class Py225:

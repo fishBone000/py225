@@ -1,4 +1,6 @@
 import socket
+from asyncio import open_connection
+
 from Crypto.PublicKey.ECC import EccKey
 from Crypto.Signature import eddsa
 from Crypto.Hash import SHA512
@@ -7,6 +9,7 @@ from protocol.transport import NonceManager
 from transport import TCPTransport
 from construct import Struct, Int32ub, Array, Int16ub
 
+MIN_EXPIRE_SECONDS = 1800 # 30 mins
 
 def get_struct(num_ports):
     return Struct(
@@ -26,22 +29,27 @@ def parse(data: bytes) -> (int, list[int]):
     if (sz - 4) % 2:
         raise ValueError("bad format")
     r = get_struct(num_ports).parse(data)
+    if r.sec_til_expire <= MIN_EXPIRE_SECONDS:
+        raise ValueError(f"expire time too short (<= {MIN_EXPIRE_SECONDS} secs)")
     return r.sec_til_expire, r.ports
 
 
-def query(addr: tuple[str, int],
-          priv_key: EccKey, host_pub_key: EccKey | None) -> (int, list[int], tuple[bytes, bytes]):
-    with socket.create_connection(addr, timeout=5) as s:
-        (k1, k2, host_pub_key) = kex.client_to_server(s, host_pub_key)
-        tp = TCPTransport(s, k1, k2, None)
+async def query(addr: tuple[str, int],
+                priv_key: EccKey, host_pub_key: EccKey | None) -> (int, list[int], tuple[bytes, bytes]):
+    r, w = await open_connection(addr[0], addr[1], timeout=5)
 
-        # Do authentication
-        pub_key = priv_key.public_key()
-        signer = eddsa.new(priv_key, mode="rfc8032")
-        h = SHA512.new(k1 + k2 + pub_key.export_key(format="raw")).digest()
-        sign = signer.sign(h)
-        tp.sendall(pub_key.export_key(format="raw") + sign)
+    (k1, k2, host_pub_key) = kex.client_to_server(s, host_pub_key)
+    tp = TCPTransport((r, w), k1, k2, None)
 
-        data = tp.recv()
-        (exp, ports) = parse(data)
+    # Do authentication
+    pub_key = priv_key.public_key()
+    signer = eddsa.new(priv_key, mode="rfc8032")
+    h = SHA512.new(k1 + k2 + pub_key.export_key(format="raw")).digest()
+    sign = signer.sign(h)
+    await tp.sendall(pub_key.export_key(format="raw") + sign)
+
+    data = await tp.recv()
+    (exp, ports) = parse(data)
+
+
     return exp, ports, k1, k2, host_pub_key

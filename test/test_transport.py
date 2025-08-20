@@ -67,8 +67,8 @@ class TestTransport(unittest.TestCase):
                     buf = await t2.recv()
                     self.assertEqual(data, buf)
         finally:
-            t1.close()
-            t2.close()
+            await t1.close()
+            await t2.close()
 
     def test_udp(self):
         ((m1, m2), (k1, k2)) = prepare_key_and_mng()
