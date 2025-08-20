@@ -66,7 +66,7 @@ class _Session:
         new_task = create_task(self.query(), name=f"Query Task ({self.address})")
         self.next_query_task = new_task
 
-        await asyncio.sleep(60*5)
+        await asyncio.sleep(60 * 5)
 
         if new_task.exception() is not None:
             new_task = create_task(self.query(), name=f"Query Task ({self.address})")
@@ -202,8 +202,6 @@ class Py225:
             w.close()
             await tp.close()
             await w.wait_closed()
-
-
 
     def start(self):
         logging.info("py225 start up")

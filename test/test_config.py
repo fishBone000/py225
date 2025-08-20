@@ -1,10 +1,9 @@
 import unittest
 
 import yaml
+from Crypto.PublicKey import ECC
 
 import config
-
-from Crypto.PublicKey import ECC
 
 
 class TestLoadingYamlConfig(unittest.TestCase):

@@ -1,15 +1,14 @@
-import asyncio
+import os
 import os
 import threading
-from asyncio import AbstractEventLoop, StreamReader, StreamWriter
+from asyncio import StreamReader, StreamWriter
 from dataclasses import dataclass
-from socket import socket
 
 from Crypto.Cipher import AES, ChaCha20
 from Crypto.Hash import Poly1305
 
-from protocol.util import recv_full, timingsafe_bcmp
 from protocol.kex import CHACHA20_KEY_SIZE_BYTES
+from protocol.util import timingsafe_bcmp
 
 CHACHA20_NONCE_SIZE_BYTES = 12
 POLY1305_KEY_SIZE_BYTES = 32

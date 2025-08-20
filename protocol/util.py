@@ -1,5 +1,4 @@
 from asyncio import StreamReader
-from socket import socket
 
 from Crypto.PublicKey import ECC
 

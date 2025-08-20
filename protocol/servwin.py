@@ -1,15 +1,15 @@
-import socket
 from asyncio import open_connection
 
+from Crypto.Hash import SHA512
 from Crypto.PublicKey.ECC import EccKey
 from Crypto.Signature import eddsa
-from Crypto.Hash import SHA512
-import kex
-from protocol.transport import NonceManager
-from transport import TCPTransport
-from construct import Struct, Int32ub, Array, Int16ub
+from construct import Struct, Int32ub, Int16ub
 
-MIN_EXPIRE_SECONDS = 1800 # 30 mins
+import kex
+from transport import TCPTransport
+
+MIN_EXPIRE_SECONDS = 1800  # 30 mins
+
 
 def get_struct(num_ports):
     return Struct(
@@ -38,7 +38,7 @@ async def query(addr: tuple[str, int],
                 priv_key: EccKey, host_pub_key: EccKey | None) -> (int, list[int], tuple[bytes, bytes]):
     r, w = await open_connection(addr[0], addr[1], timeout=5)
 
-    (k1, k2, host_pub_key) = kex.client_to_server(s, host_pub_key)
+    (k1, k2, host_pub_key) = await kex.client_to_server((r, w), host_pub_key)
     tp = TCPTransport((r, w), k1, k2, None)
 
     # Do authentication
@@ -50,6 +50,5 @@ async def query(addr: tuple[str, int],
 
     data = await tp.recv()
     (exp, ports) = parse(data)
-
 
     return exp, ports, k1, k2, host_pub_key

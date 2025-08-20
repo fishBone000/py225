@@ -10,8 +10,10 @@ def join_host_port(addr: tuple[str, int]) -> str:
         return f"[{host}]:{port}"
     return f"{host}:{port}"
 
+
 class __TerminateTaskGroup(Exception):
     pass
+
 
 async def relay(rw: tuple[StreamReader, StreamWriter], t: TCPTransport):
     try:
@@ -21,6 +23,7 @@ async def relay(rw: tuple[StreamReader, StreamWriter], t: TCPTransport):
             tg.create_task(relay_t2s(t, w))
     except __TerminateTaskGroup:
         pass
+
 
 async def relay_s2t(r: StreamReader, t: TCPTransport):
     d = await r.read(4096)

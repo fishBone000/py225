@@ -1,5 +1,4 @@
 import base64
-import socket
 from asyncio import StreamReader, StreamWriter
 
 from Crypto.Hash import SHA512

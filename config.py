@@ -95,6 +95,7 @@ def get_default_cfg_paths(name: Literal["py225", "py225d", "py225-gui"]) -> list
 
     return paths
 
+
 def load(p, name):
     paths = [p] if p is not None else get_default_cfg_paths(name)
     loaded = False
