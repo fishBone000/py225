@@ -123,9 +123,6 @@ class TCPTransport:
             self.initial_rcv_nonce = None
         self.broken = False
 
-    async def prepare_async(self):
-        self.r, self.w = await asyncio.open_connection(sock=self.s)
-
     async def sendall(self, b: bytes):
         if len(b) > 0xFFFFFFFF:
             raise ValueError("packet too large")
@@ -133,10 +130,9 @@ class TCPTransport:
             raise RuntimeError("broken transport")
         if self.snd_nonce is not None and self.snd_nonce - self.initial_snd_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
-            self.s.close()
+            self.w.close()
+            await self.w.wait_closed()
             raise NonceDepletedError
-        if self.w is None:
-            raise RuntimeError("transport not prepared for async, call prepare_async() first")
 
         data = b''
         # If it's the first packet, generate a nonce and send encrypted nonce first

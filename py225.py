@@ -4,13 +4,10 @@ import argparse
 import asyncio
 import logging
 import random
-import socket
 import sys
-import threading
+from asyncio import Lock, create_task, Task, StreamReader, StreamWriter
 from datetime import datetime, timedelta
-from time import sleep
 from typing import Literal
-from asyncio import Lock, create_task, Task
 
 from Crypto.PublicKey.ECC import EccKey
 
@@ -18,6 +15,7 @@ import config
 import log
 from protocol import servwin
 from protocol.transport import NonceManager, TCPTransport
+from util import join_host_port, relay
 
 NAME: Literal["py225"] = "py225"
 
@@ -118,6 +116,7 @@ class _Server:
 
 class Py225:
     servers: dict[tuple[str, int], _Server]
+    tasks: set[Task]
 
     def __init__(self):
         self.config = None
@@ -156,12 +155,10 @@ class Py225:
         for rec in self.config.servers:
             self.servers[(rec.host, rec.port)] = _Server(rec)
 
-    def listen_tcp(self):
-        with socket.create_server((self.config.listen_ip, self.config.listen_port)) as listener:
-            while True:
-                s, addr = listener.accept()
-                logging.debug(f"New inbound TCP from {addr[0]}:{addr[1]}")
-                threading.Thread(target=self.handle_tcp, args=(s,)).start()
+    async def listen_tcp(self):
+        server = await asyncio.start_server(self.handle_tcp, self.config.listen_ip, self.config.listen_port)
+        async with server:
+            await server.serve_forever()
 
     def choose_server(self) -> tuple[_Server, str]:
         """
@@ -171,24 +168,48 @@ class Py225:
         addr = (rec.host, rec.port)
         return self.servers[addr], addr[0]
 
-    def handle_tcp(self, s: socket.socket):
+    async def handle_tcp(self, r: StreamReader, w: StreamWriter):
+        addr = join_host_port(w.get_extra_info("peername"))
+        logging.debug(f"Inbound TCP from {addr}")
+
         server, host = self.choose_server()
-        res = server.sess.get()
-        if res is None:
-            logging.warning(f"Closing TCP inbound {s.getpeername()}, service window not ready")
-            s.close()
+        try:
+            res = await server.sess.get()
+        except:
+            logging.warning(f"Closing TCP inbound {addr}, service window not ready")
+            w.close()
+            await w.wait_closed()
             return
 
-        ports, mng, _, k1, k2 = res
+        _, ports, mng, _, k1, k2 = res
         port = random.choice(ports)
         try:
-            with socket.create_connection((host, port), 5) as out:
-                t = TCPTransport(out, k1, k2, mng)
+            rw2 = await asyncio.open_connection(host, port, timeout=5)
         except:
-            pass
+            logging.warning(f"Failed to connect to server: {join_host_port((host, port))}", exc_info=True)
+            w.close()
+            await w.wait_closed()
+            return
+
+        tp = TCPTransport(rw2, k1, k2, mng)
+        try:
+            await relay((r, w), tp)
+        except Exception as e:
+            logging.warning(f"Error occurred while relaying "
+                            f"from client {addr} to server {join_host_port((host, port))}",
+                            exc_info=True)
+        finally:
+            w.close()
+            await tp.close()
+            await w.wait_closed()
+
+
 
     def start(self):
         logging.info("py225 start up")
+        sess_gets = [self.servers[s].sess.get() for s in self.servers]
+        aws = [self.listen_tcp()] + sess_gets
+        asyncio.gather(*aws)
 
 
 if __name__ == '__main__':
