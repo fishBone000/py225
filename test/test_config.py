@@ -6,11 +6,21 @@ from Crypto.PublicKey.ECC import generate, EccKey
 import config
 
 
+def gen():
+    return generate(curve="Ed25519")
+
+
+def export(k: EccKey, indent: int = 1):
+    s = k.export_key(format="PEM")
+    return ("\n\n" + "  " * indent).join(s.split("\n"))
+
+
 class TestLoadingYamlConfig(unittest.TestCase):
     def test_client_dump(self):
         """
         Tests config.Client dumps correctly
         """
+
         def gen():
             return generate(curve="Ed25519")
 
@@ -28,8 +38,6 @@ class TestLoadingYamlConfig(unittest.TestCase):
         self.assertEqual(cfg, cfg2)
 
     def test_client_load(self):
-        def gen():
-            return generate(curve="Ed25519")
         default_key = gen()
         priv_keys = [default_key, gen()]
         pub_keys = [gen(), None]
@@ -37,12 +45,8 @@ class TestLoadingYamlConfig(unittest.TestCase):
             [config.ServerRecord("google.com", 443, priv_keys[0], pub_keys[0]),
              config.ServerRecord("cloudflare.com", 888, priv_keys[1], pub_keys[1])
              ],
-            "stderr","warning", "127.0.0.1", 1080, default_key
+            "stderr", "warning", "127.0.0.1", 1080, default_key
         )
-
-        def export(k: EccKey, indent: int = 1):
-            s = k.export_key(format="PEM")
-            return ("\n\n" + "  "*indent).join(s.split("\n"))
 
         yml = f"""
 !Client
@@ -67,4 +71,45 @@ verbosity: warning
         cfg.validate()
         cfg.post_load()
 
+        self.assertEqual(expected, cfg)
+
+    def test_server_load(self):
+        priv_key = gen()
+        accepted_keys = [gen().public_key() for _ in range(3)]
+        yml = f"""
+!Server
+listen_ip: 0.0.0.0
+listen_port_range: [40000, 45000]
+percent_of_open_ports_range: [30%, 50%]
+serv_win_duration_mins_range: [60, 120]
+connect_host: 127.0.0.1
+connect_port: 3000
+
+log: syslog
+verbosity: info
+
+private_key: '{export(priv_key, 1)}'
+accepted_keys: 
+- '{export(accepted_keys[0], 1)}'
+- '{export(accepted_keys[1], 1)}'
+- '{export(accepted_keys[2], 1)}'
+"""
+
+        expected = config.Server("0.0.0.0", [40000, 45000], [0.3, 0.5], [60, 120], "127.0.0.1", 3000,
+                                 "syslog", "info", priv_key, accepted_keys)
+        cfg = yaml.safe_load(yml)
+        cfg.validate()
+        cfg.post_load()
+        self.assertEqual(expected, cfg)
+
+    def test_server_dump(self):
+        priv_key = gen()
+        accepted_keys = [gen().public_key() for _ in range(3)]
+
+        expected = config.Server("0.0.0.0", [40000, 45000], [0.3, 0.5], [60, 120], "127.0.0.1", 3000,
+                                 "syslog", "info", priv_key, accepted_keys)
+        yml = yaml.safe_dump(expected)
+        cfg = yaml.safe_load(yml)
+        cfg.validate()
+        cfg.post_load()
         self.assertEqual(expected, cfg)

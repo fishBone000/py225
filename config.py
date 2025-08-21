@@ -173,7 +173,91 @@ class Client(BaseConfig):
             d["private_key"] = self.private_key.export_key(format="PEM")
         return d
 
+@dataclass
+class Server(BaseConfig):
+    listen_ip: str
+    listen_port_range: list[int]
+    percent_of_open_ports_range: list[float | str]
+    serv_win_duration_mins_range: list[int]
+    connect_host: str
+    connect_port: int
 
+    log: str
+    verbosity: str
+
+    private_key: EccKey | str
+    accepted_keys: list[EccKey | str]
+
+    yaml_tag = "!Server"
+
+    def validate(self):
+        if (len(self.listen_port_range) != 2 or
+            not (0 < self.listen_port_range[0] < 65536) or
+            not (0 < self.listen_port_range[1] < 65536) or
+            self.listen_port_range[0] > self.listen_port_range[1]
+        ):
+            raise ValueError("Invalid listen port range")
+
+        if (len(self.serv_win_duration_mins_range) != 2 or
+            self.serv_win_duration_mins_range[0] > self.serv_win_duration_mins_range[1]
+        ):
+            raise ValueError("Invalid service window duration range")
+
+        if 30 > self.serv_win_duration_mins_range[0]:
+            raise ValueError("Minimum service window duration is 30 mins")
+
+    def post_load(self):
+        try:
+            self.private_key = ECC.import_key(self.private_key)
+            if self.private_key.curve != "Ed25519":
+                raise ValueError("Unsupported key type")
+            if not self.private_key.has_private():
+                raise ValueError("Expected private key, got public key")
+        except Exception as e:
+            e.add_note("Field private_key must be importable Ed25519 private key in ASCII")
+            raise
+
+        kstrs = self.accepted_keys
+        self.accepted_keys = []
+        for i in range(len(kstrs)):
+            kstr = kstrs[i]
+            try:
+                k = ECC.import_key(kstr)
+                if k.curve != "Ed25519":
+                    raise ValueError("Unsupported key type")
+                if k.has_private():
+                    raise ValueError("Expected public key, got private key")
+                self.accepted_keys.append(k)
+            except Exception as e:
+                e.add_note("Field accepted_keys must be a list of importable Ed25519 public keys in ASCII")
+                e.add_note(f"In #{i} item of field accepted_keys")
+                raise
+
+        msg = "Field percent_of_open_ports_range must be a list of 2 percentages (e.g. 0.58 or 58%)"
+        if len(self.percent_of_open_ports_range) != 2:
+            raise ValueError(msg)
+        for i in range(len(self.percent_of_open_ports_range)):
+            r = self.percent_of_open_ports_range
+            p = r[i]
+            if isinstance(p, str):
+                if p[-1] != "%":
+                    raise ValueError(msg)
+                try:
+                    r[i] = float(p[:-1]) / 100
+                except Exception as e:
+                    e.add_note(msg)
+            if not 0 < r[i] < 1:
+                raise ValueError(msg)
+        if self.percent_of_open_ports_range[0] > self.percent_of_open_ports_range[1]:
+            raise ValueError(msg)
+
+    def __getstate__(self):
+        d = self.__dict__.copy()
+        d["private_key"] = self.private_key.export_key(format="PEM")
+        d["accepted_keys"] = l = []
+        for k in self.accepted_keys:
+            l.append(k.export_key(format="PEM"))
+        return d
 
 def get_default_cfg_paths(name: Literal["py225", "py225d", "py225-gui"]) -> list[str]:
     dirs = []
