@@ -1,5 +1,4 @@
 import os
-import os
 import threading
 from asyncio import StreamReader, StreamWriter
 from dataclasses import dataclass
@@ -7,14 +6,9 @@ from dataclasses import dataclass
 from Crypto.Cipher import AES, ChaCha20
 from Crypto.Hash import Poly1305
 
-from protocol.kex import CHACHA20_KEY_SIZE_BYTES
+from protocol import CHACHA20_NONCE_SIZE_BYTES, AES_BLOCK_SIZE_BYTES, POLY1305_TAG_SIZE_BYTES, CHACHA20_KEY_SIZE_BYTES
 from protocol.util import timingsafe_bcmp
 
-CHACHA20_NONCE_SIZE_BYTES = 12
-POLY1305_KEY_SIZE_BYTES = 32
-AES_BLOCK_SIZE_BYTES = 16
-POLY1305_TAG_SIZE_BYTES = 16
-CHACHA20_MAX_NONCE = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF
 HEADER_SIZE_BYTES = 4
 
 TCP_NONCE_STEP_SZ = 2 ** 12

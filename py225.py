@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
 import random
@@ -11,8 +10,8 @@ from typing import Literal
 
 from Crypto.PublicKey.ECC import EccKey
 
+import common
 import config
-import log
 from protocol import servwin
 from protocol.transport import NonceManager, TCPTransport
 from util import join_host_port, relay
@@ -76,9 +75,11 @@ class _Session:
         logging.info(f"Begin querying service window from {self.address[0]} port {self.address[1]}.")
         for retry in range(self.MAX_RETRIES + 1):
             try:
-                (expire, ports, k1, k2, _) = await servwin.query(self.address,
+                r, w = await asyncio.open_connection(*self.address)
+                (expire, ports, k1, k2, _) = await servwin.query((r, w),
                                                                  self.private_key,
                                                                  self.host_public_key)
+                w.close()
                 ts = datetime.now() + timedelta(seconds=expire)
                 logging.info(f"Query service window from {self.address[0]} port {self.address[1]} success")
 
@@ -88,6 +89,8 @@ class _Session:
                 self.next_query_task = None
                 self.expire = ts
                 self.timer_task = create_task(self.expire_timer(), name="Expire Timer")
+
+                await w.wait_closed()
 
                 return ts, ports, NonceManager.new("tcp"), NonceManager.new("udp"), k1, k2
             except (TimeoutError, EOFError) as e:
@@ -117,39 +120,14 @@ class _Server:
 class Py225:
     servers: dict[tuple[str, int], _Server]
     tasks: set[Task]
+    config: config.Client
 
     def __init__(self):
-        self.config = None
         self.servers = {}
 
-        parser = argparse.ArgumentParser(
-            prog=NAME,
-            description="PyProject 2025"
-        )
-
-        parser.add_argument("-c", "--config", nargs=1)
-        parser.add_argument("-v", "--verbose", nargs="?", const="info", default="warning")
-        parser.add_argument("-l", "--log", nargs=1)
-
-        args = parser.parse_args()
-
-        if args.verbose:
-            try:
-                logging.root.setLevel(args.verbose)
-            except Exception as e:
-                logging.warning(f"Invalid verbosity: {e}")
-
-        self.config = config.load(args.config, NAME)
-        if not args.verbose:
-            try:
-                logging.root.setLevel(self.config.verbosity)
-            except Exception as e:
-                logging.warning(f"Invalid verbosity: {e}")
-
-        try:
-            logging.root = log.setup(NAME, args.log, args.verbose or self.config.verbosity)
-        except Exception as e:
-            logging.error(e)
+        common.init(self, NAME)
+        if not isinstance(self.config, config.Client):
+            logging.error("Bad config format")
             sys.exit(1)
 
         for rec in self.config.servers:
@@ -175,7 +153,7 @@ class Py225:
         server, host = self.choose_server()
         try:
             res = await server.sess.get()
-        except:
+        except Exception:
             logging.warning(f"Closing TCP inbound {addr}, service window not ready")
             w.close()
             await w.wait_closed()
@@ -185,7 +163,7 @@ class Py225:
         port = random.choice(ports)
         try:
             rw2 = await asyncio.open_connection(host, port, timeout=5)
-        except:
+        except Exception:
             logging.warning(f"Failed to connect to server: {join_host_port((host, port))}", exc_info=True)
             w.close()
             await w.wait_closed()
@@ -194,10 +172,11 @@ class Py225:
         tp = TCPTransport(rw2, k1, k2, mng)
         try:
             await relay((r, w), tp)
-        except Exception as e:
+        except Exception:
             logging.warning(f"Error occurred while relaying "
                             f"from client {addr} to server {join_host_port((host, port))}",
                             exc_info=True)
+            raise
         finally:
             w.close()
             await tp.close()

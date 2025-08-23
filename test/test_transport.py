@@ -4,7 +4,7 @@ import random
 import socket
 import unittest
 
-from protocol.kex import CHACHA20_KEY_SIZE_BYTES
+from protocol import CHACHA20_KEY_SIZE_BYTES
 from protocol.transport import TCPTransport, NonceManager, UDPPacket
 
 

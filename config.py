@@ -173,11 +173,14 @@ class Client(BaseConfig):
             d["private_key"] = self.private_key.export_key(format="PEM")
         return d
 
+
 @dataclass
 class Server(BaseConfig):
     listen_ip: str
     listen_port_range: list[int]
     percent_of_open_ports_range: list[float | str]
+    ports_lasting_duration_mins_range: list[int]
+    serv_win_port: int
     serv_win_duration_mins_range: list[int]
     connect_host: str
     connect_port: int
@@ -192,14 +195,17 @@ class Server(BaseConfig):
 
     def validate(self):
         if (len(self.listen_port_range) != 2 or
-            not (0 < self.listen_port_range[0] < 65536) or
-            not (0 < self.listen_port_range[1] < 65536) or
-            self.listen_port_range[0] > self.listen_port_range[1]
+                not (0 < self.listen_port_range[0] < 65536) or
+                not (0 < self.listen_port_range[1] < 65536) or
+                self.listen_port_range[0] > self.listen_port_range[1]
         ):
             raise ValueError("Invalid listen port range")
 
+        if not 0 < self.serv_win_port < 65536:
+            raise ValueError("Invalid service window port")
+
         if (len(self.serv_win_duration_mins_range) != 2 or
-            self.serv_win_duration_mins_range[0] > self.serv_win_duration_mins_range[1]
+                self.serv_win_duration_mins_range[0] > self.serv_win_duration_mins_range[1]
         ):
             raise ValueError("Invalid service window duration range")
 
@@ -251,6 +257,15 @@ class Server(BaseConfig):
         if self.percent_of_open_ports_range[0] > self.percent_of_open_ports_range[1]:
             raise ValueError(msg)
 
+        if (len(self.ports_lasting_duration_mins_range) != 2 or
+                not self.ports_lasting_duration_mins_range[0] <= self.ports_lasting_duration_mins_range[1]):
+            raise ValueError("Field ports_lasting_duration_mins_range should be a list of 2 integers.")
+
+        if self.ports_lasting_duration_mins_range[0] < self.serv_win_duration_mins_range[0] * 2:
+            e = ValueError("Minimum ports lasting duration is minimum service window duration times 2.")
+            e.add_note("It's recommended that ports lasting duration is much longer than service window duration.")
+            raise e
+
     def __getstate__(self):
         d = self.__dict__.copy()
         d["private_key"] = self.private_key.export_key(format="PEM")
@@ -258,6 +273,7 @@ class Server(BaseConfig):
         for k in self.accepted_keys:
             l.append(k.export_key(format="PEM"))
         return d
+
 
 def get_default_cfg_paths(name: Literal["py225", "py225d", "py225-gui"]) -> list[str]:
     dirs = []

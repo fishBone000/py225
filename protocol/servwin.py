@@ -1,4 +1,4 @@
-from asyncio import open_connection
+from asyncio import open_connection, StreamReader, StreamWriter
 
 from Crypto.Hash import SHA512
 from Crypto.PublicKey.ECC import EccKey
@@ -6,6 +6,9 @@ from Crypto.Signature import eddsa
 from construct import Struct, Int32ub, Int16ub
 
 import kex
+from protocol import ED25519_KEY_SIZE_BYTES, ED25519_EDDSA_SIZE_BYTES
+from protocol.transport import SecurityError
+from protocol.util import import_raw_ed25519_public_key
 from transport import TCPTransport
 
 MIN_EXPIRE_SECONDS = 1800  # 30 mins
@@ -34,9 +37,9 @@ def parse(data: bytes) -> (int, list[int]):
     return r.sec_til_expire, r.ports
 
 
-async def query(addr: tuple[str, int],
+async def query(rw: tuple[StreamReader, StreamWriter],
                 priv_key: EccKey, host_pub_key: EccKey | None) -> (int, list[int], tuple[bytes, bytes]):
-    r, w = await open_connection(addr[0], addr[1], timeout=5)
+    r, w = rw
 
     (k1, k2, host_pub_key) = await kex.client_to_server((r, w), host_pub_key)
     tp = TCPTransport((r, w), k1, k2, None)
@@ -52,3 +55,30 @@ async def query(addr: tuple[str, int],
     (exp, ports) = parse(data)
 
     return exp, ports, k1, k2, host_pub_key
+
+
+async def feed(rw: tuple[StreamReader, StreamWriter],
+               priv_key: EccKey, accepted_keys: list[EccKey],
+               sec_til_expire: int, ports: list[int]) -> tuple[bytes, bytes, int]:
+    r, w = rw
+
+    k1, k2 = await kex.server_to_client(rw, priv_key)
+    tp = TCPTransport(rw, k1, k2, None)
+    data = await tp.recv()
+    if len(data) != ED25519_KEY_SIZE_BYTES + ED25519_EDDSA_SIZE_BYTES:
+        raise ValueError("Bad service window query format")
+    peer_pub_key_bytes = data[:ED25519_KEY_SIZE_BYTES]
+    peer_sign = data[-ED25519_EDDSA_SIZE_BYTES:]
+
+    peer_pub_key = import_raw_ed25519_public_key(peer_pub_key_bytes)
+    verifier = eddsa.new(peer_pub_key, mode="rfc8032")
+    h = SHA512.new(k1 + k2 + peer_pub_key.export_key(format="raw")).digest()
+    if not verifier.verify(h, peer_sign):
+        raise SecurityError("Authenticate failed: bad signature")
+
+    if not peer_pub_key in accepted_keys:
+        raise SecurityError("Authenticate failed: client public key not in allow list")
+
+    await tp.sendall(build(sec_til_expire, ports))
+
+    return k1, k2, sec_til_expire

@@ -81,6 +81,7 @@ verbosity: warning
 listen_ip: 0.0.0.0
 listen_port_range: [40000, 45000]
 percent_of_open_ports_range: [30%, 50%]
+serv_win_port: 1888
 serv_win_duration_mins_range: [60, 120]
 connect_host: 127.0.0.1
 connect_port: 3000
@@ -95,7 +96,7 @@ accepted_keys:
 - '{export(accepted_keys[2], 1)}'
 """
 
-        expected = config.Server("0.0.0.0", [40000, 45000], [0.3, 0.5], [60, 120], "127.0.0.1", 3000,
+        expected = config.Server("0.0.0.0", [40000, 45000], [0.3, 0.5], 1888, [60, 120], "127.0.0.1", 3000,
                                  "syslog", "info", priv_key, accepted_keys)
         cfg = yaml.safe_load(yml)
         cfg.validate()
@@ -106,7 +107,7 @@ accepted_keys:
         priv_key = gen()
         accepted_keys = [gen().public_key() for _ in range(3)]
 
-        expected = config.Server("0.0.0.0", [40000, 45000], [0.3, 0.5], [60, 120], "127.0.0.1", 3000,
+        expected = config.Server("0.0.0.0", [40000, 45000], [0.3, 0.5], 1888, [60, 120], "127.0.0.1", 3000,
                                  "syslog", "info", priv_key, accepted_keys)
         yml = yaml.safe_dump(expected)
         cfg = yaml.safe_load(yml)

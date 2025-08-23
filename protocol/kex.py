@@ -7,14 +7,7 @@ from Crypto.Protocol.KDF import HKDF
 from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
 
-from protocol import util
-
-CHACHA20_KEY_SIZE_BYTES = 32
-CHACHA20_POLY1305_KEY_SIZE_BYTES = 64
-ED25519_KEY_SIZE_BYTES = 32
-ED25519_ECDSA_SIZE_BYTES = 64
-SHA256_SIZE_BYTES = 32
-SHA512_SIZE_BYTES = 64
+from protocol import util, CHACHA20_KEY_SIZE_BYTES, ED25519_KEY_SIZE_BYTES, ED25519_EDDSA_SIZE_BYTES
 
 
 class KexError(Exception):
@@ -37,7 +30,7 @@ async def client_to_server(rw: tuple[StreamReader, StreamWriter], host_public_ke
     await w.drain()
 
     # K_S, Q_S, signature on hash
-    resp = await r.readexactly(2 * ED25519_KEY_SIZE_BYTES + ED25519_ECDSA_SIZE_BYTES)
+    resp = await r.readexactly(2 * ED25519_KEY_SIZE_BYTES + ED25519_EDDSA_SIZE_BYTES)
     try:
         k_s = util.import_raw_ed25519_public_key(resp[:ED25519_KEY_SIZE_BYTES])
     except ValueError as e:
