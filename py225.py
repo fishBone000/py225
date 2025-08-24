@@ -201,4 +201,7 @@ class Py225:
 
 if __name__ == '__main__':
     instance = Py225()
-    asyncio.run(instance.run())
+    try:
+        asyncio.run(instance.run())
+    except KeyboardInterrupt:
+        pass
