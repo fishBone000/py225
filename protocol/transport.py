@@ -1,5 +1,4 @@
 import os
-import threading
 from asyncio import StreamReader, StreamWriter
 from dataclasses import dataclass
 
@@ -33,53 +32,49 @@ class NonceManager:
         self.steps = steps
         self.win_sz = step_sz * steps
 
-        self.recv_upper = 0
-        self.recv_set = {0}
-        self.recv_lock = threading.Lock()
+        self.recv_upper = step_sz
+        self.recv_set = {step_sz}
 
-        self.send_lock = threading.Lock()
-        self.next_send = 0
+        self.next_send = step_sz
 
     def check_recv(self, n):
-        with self.recv_lock:
-            if n % self.step_sz != 0:
-                raise ValueError("bad nonce")
+        if n % self.step_sz != 0:
+            raise ValueError("bad nonce")
 
-            # If received nonce is outside the congestion window,
-            # we need to update the window by updating recv_set
-            if n > self.recv_upper:
-                # If the new congestion window does not intersect with the old one
-                if n - self.recv_upper > self.win_sz:
-                    self.recv_set = {i for i in range(n - self.win_sz, n, self.step_sz)}
-                else:
-                    # Both window intersects with each other
-                    recv_lower = self.recv_upper - self.win_sz
-                    new_recv_lower = n - self.win_sz
-                    # Remove nonces that are outside the window
-                    for i in range(recv_lower, new_recv_lower, self.step_sz):
-                        self.recv_set.discard(i)
-                    # Add new nonces
-                    for i in range(self.recv_upper + self.step_sz, n, self.step_sz):
-                        self.recv_set.add(i)
-                self.recv_upper = n
-                return True
-
-            # If received nonce is too old
-            if n < max(0, self.recv_upper - self.steps * self.step_sz):
-                return False
-
-            # Received nonce falls in the congestion window
-            try:
-                self.recv_set.remove(n)
-            except KeyError:
-                return False
+        # If received nonce is outside the congestion window,
+        # we need to update the window by updating recv_set
+        if n > self.recv_upper:
+            # If the new congestion window does not intersect with the old one
+            if n - self.recv_upper > self.win_sz:
+                self.recv_set = {i for i in range(n - self.win_sz, n, self.step_sz)}
+            else:
+                # Both window intersects with each other
+                recv_lower = self.recv_upper - self.win_sz
+                new_recv_lower = n - self.win_sz
+                # Remove nonces that are outside the window
+                for i in range(recv_lower, new_recv_lower, self.step_sz):
+                    self.recv_set.discard(i)
+                # Add new nonces
+                for i in range(self.recv_upper + self.step_sz, n, self.step_sz):
+                    self.recv_set.add(i)
+            self.recv_upper = n
             return True
 
+        # If received nonce is too old
+        if n < max(0, self.recv_upper - self.steps * self.step_sz):
+            return False
+
+        # Received nonce falls in the congestion window
+        try:
+            self.recv_set.remove(n)
+        except KeyError:
+            return False
+        return True
+
     def gen_send(self) -> int:
-        with self.send_lock:
-            nonce = self.next_send
-            self.next_send += self.step_sz
-            return nonce
+        nonce = self.next_send
+        self.next_send += self.step_sz
+        return nonce
 
     @classmethod
     def new(cls, mode):
