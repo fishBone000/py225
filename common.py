@@ -14,27 +14,31 @@ def init(obj, name):
         description="PyProject 2025"
     )
 
-    parser.add_argument("-c", "--config", nargs=1)
-    parser.add_argument("-v", "--verbose", nargs="?", const="info", default="warning")
-    parser.add_argument("-l", "--log", nargs=1)
+    parser.add_argument("-c", "--config")
+    parser.add_argument("-v", "--verbose", nargs="?", const="INFO")
+    parser.add_argument("-l", "--log")
 
     args = parser.parse_args()
 
+    verbosity = None
+
     if args.verbose:
         try:
-            logging.root.setLevel(args.verbose)
+            verbosity = args.verbose.upper()
+            logging.root.setLevel(verbosity)
         except Exception as e:
             logging.warning(f"Invalid verbosity: {e}")
 
     obj.config = config.load(args.config, name)
-    if not args.verbose:
+    if verbosity is None:
         try:
-            logging.root.setLevel(obj.config.verbosity)
+            verbosity = obj.config.verbosity.upper()
+            logging.root.setLevel(verbosity)
         except Exception as e:
             logging.warning(f"Invalid verbosity: {e}")
 
     try:
-        logging.root = log.setup(name, args.log, args.verbose or obj.config.verbosity)
+        logging.root = log.setup(name, args.log, verbosity)
     except Exception as e:
-        logging.error(e)
+        logging.error("Failed to set up logger.", exc_info=True)
         sys.exit(1)

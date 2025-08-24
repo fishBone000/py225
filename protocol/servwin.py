@@ -1,15 +1,13 @@
-from asyncio import open_connection, StreamReader, StreamWriter
+from asyncio import StreamReader, StreamWriter
 
 from Crypto.Hash import SHA512
 from Crypto.PublicKey.ECC import EccKey
 from Crypto.Signature import eddsa
 from construct import Struct, Int32ub, Int16ub
 
-import kex
-from protocol import ED25519_KEY_SIZE_BYTES, ED25519_EDDSA_SIZE_BYTES
-from protocol.transport import SecurityError
+from protocol import ED25519_KEY_SIZE_BYTES, ED25519_EDDSA_SIZE_BYTES, kex
+from protocol.transport import SecurityError, TCPTransport
 from protocol.util import import_raw_ed25519_public_key
-from transport import TCPTransport
 
 MIN_EXPIRE_SECONDS = 1800  # 30 mins
 
@@ -73,8 +71,7 @@ async def feed(rw: tuple[StreamReader, StreamWriter],
     peer_pub_key = import_raw_ed25519_public_key(peer_pub_key_bytes)
     verifier = eddsa.new(peer_pub_key, mode="rfc8032")
     h = SHA512.new(k1 + k2 + peer_pub_key.export_key(format="raw")).digest()
-    if not verifier.verify(h, peer_sign):
-        raise SecurityError("Authenticate failed: bad signature")
+    verifier.verify(h, peer_sign)
 
     if not peer_pub_key in accepted_keys:
         raise SecurityError("Authenticate failed: client public key not in allow list")

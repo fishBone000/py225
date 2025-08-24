@@ -163,7 +163,7 @@ class TCPTransport:
             raise RuntimeError("broken transport")
         if self.rcv_nonce is not None and self.rcv_nonce - self.initial_rcv_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
-            self.s.close()
+            await self.close()
             raise NonceDepletedError
 
         ciphertext = b''
@@ -182,13 +182,13 @@ class TCPTransport:
                                     data=buf[:AES_BLOCK_SIZE_BYTES]).digest()
             if not timingsafe_bcmp(tag, expected):
                 self.broken = True
-                self.s.close()
+                await self.close()
                 raise SecurityError("tag mismatch")
 
             nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
             if not self.mng.check_recv(nonce):
                 self.broken = True
-                self.s.close()
+                await self.close()
                 raise BadNonceError
             self.initial_rcv_nonce = self.rcv_nonce = nonce + 1
 
@@ -214,7 +214,7 @@ class TCPTransport:
         expected_tag = Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=ciphertext).digest()
         if not timingsafe_bcmp(tag, expected_tag):
             self.broken = True
-            self.s.close()
+            await self.close()
             raise SecurityError("tag mismatch")
 
         data_chacha = ChaCha20.new(key=self.k_2, nonce=nonce_buf)

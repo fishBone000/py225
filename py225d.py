@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import sys
 from asyncio import Task, create_task, StreamWriter, StreamReader
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -120,6 +121,9 @@ class Py225d:
 
     def __init__(self):
         common.init(self, NAME)
+        if not isinstance(self.config, config.Server):
+            logging.error("Bad config format.")
+            sys.exit(1j)
 
         self.sess_mng = SessionManager()
         self.tcp_mng = TCPPortsManager(self)
@@ -145,13 +149,12 @@ class Py225d:
             exp_ts = datetime.now() + timedelta(seconds=exp)
             ip, _ = w.get_extra_info("peername")
             self.sess_mng.new_sess(ip, Session(k1, k2, exp_ts))
-
-            w.close()
-            await w.wait_closed()
-
         except Exception:
             logging.error(f"Reply service window query to client {addr} failed.", exc_info=True)
             raise
+        finally:
+            w.close()
+            await w.wait_closed()
 
     async def listen_serv_win_query(self):
         try:
@@ -198,19 +201,27 @@ class Py225d:
         tp = TCPTransport((r, w), k1, k2, sess.tcp_mng)
 
         try:
-            await util.relay((r, w), tp)
-            w.close()
+            r1, w1 = await asyncio.open_connection(self.config.connect_host, self.config.connect_port)
+        except Exception:
+            logging.warning(f"Connect to target host failed", exc_info=True)
             await tp.close()
-            await w.wait_closed()
+            return
+
+        try:
+            await util.relay((r1, w1), tp)
         except Exception:
             logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed.", exc_info=True)
             raise
+        finally:
+            w.close()
+            await tp.close()
+            await w.wait_closed()
 
-    def start(self):
+    async def run(self):
         coros = [self.tcp_mng.start(), self.listen_serv_win_query()]
-        asyncio.gather(*coros)
+        await asyncio.gather(*coros)
 
 
 if __name__ == '__main__':
     instance = Py225d()
-    instance.start()
+    asyncio.run(instance.run())

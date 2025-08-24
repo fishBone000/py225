@@ -19,9 +19,9 @@ async def relay(rw: tuple[StreamReader, StreamWriter], t: TCPTransport):
     try:
         async with TaskGroup() as tg:
             r, w = rw
-            tg.create_task(relay_s2t(r, t))
-            tg.create_task(relay_t2s(t, w))
-    except __TerminateTaskGroup:
+            t1 = tg.create_task(relay_s2t(r, t))
+            t2 = tg.create_task(relay_t2s(t, w))
+    except* __TerminateTaskGroup:
         pass
 
 

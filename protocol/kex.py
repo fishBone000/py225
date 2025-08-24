@@ -5,6 +5,7 @@ from Crypto.Hash import SHA512
 from Crypto.Protocol.DH import key_agreement
 from Crypto.Protocol.KDF import HKDF
 from Crypto.PublicKey import ECC
+from Crypto.PublicKey.ECC import EccKey
 from Crypto.Signature import eddsa
 
 from protocol import util, CHACHA20_KEY_SIZE_BYTES, ED25519_KEY_SIZE_BYTES, ED25519_EDDSA_SIZE_BYTES
@@ -14,7 +15,7 @@ class KexError(Exception):
     pass
 
 
-async def client_to_server(rw: tuple[StreamReader, StreamWriter], host_public_key: bytes | None):
+async def client_to_server(rw: tuple[StreamReader, StreamWriter], host_public_key: EccKey | None):
     """
     Performs X25519 from client side
     :param rw: Tuple of asyncio StreamReader and StreamWriter.
@@ -35,9 +36,10 @@ async def client_to_server(rw: tuple[StreamReader, StreamWriter], host_public_ke
         k_s = util.import_raw_ed25519_public_key(resp[:ED25519_KEY_SIZE_BYTES])
     except ValueError as e:
         raise KexError("bad host public key format") from e
-    if host_public_key is not None and host_public_key != resp[:ED25519_KEY_SIZE_BYTES]:
-        raise KexError("incorrect host public key").add_note(
-            f"received raw host key is: {base64.b64encode(resp[:ED25519_KEY_SIZE_BYTES])}")
+    if host_public_key is not None and host_public_key.export_key(format="raw") != resp[:ED25519_KEY_SIZE_BYTES]:
+        e = KexError("incorrect host public key")
+        e.add_note(f"received raw host key is: {base64.b64encode(resp[:ED25519_KEY_SIZE_BYTES])}")
+        raise e
 
     try:
         q_s = util.import_raw_ed25519_public_key(resp[ED25519_KEY_SIZE_BYTES:2 * ED25519_KEY_SIZE_BYTES])
@@ -50,8 +52,7 @@ async def client_to_server(rw: tuple[StreamReader, StreamWriter], host_public_ke
     h = SHA512.new(
         k_s.export_key(format="raw") + q_c.export_key(format="raw") + q_s.export_key(format="raw") + k[0] + k[1])
     verifier = eddsa.new(k_s, "rfc8032")
-    if not verifier.verify(h, sign):
-        raise KexError("invalid hash signature")
+    verifier.verify(h, sign)
     return k[0], k[1], k_s
 
 
@@ -74,7 +75,7 @@ async def server_to_client(rw: tuple[StreamReader, StreamWriter], priv_key: ECC.
 
     eph_priv = ECC.generate(curve="ed25519")
     q_s = eph_priv.public_key()
-    k = key_agreement(eph_priv=eph_priv, eph_pub=q_s,
+    k = key_agreement(eph_priv=eph_priv, eph_pub=q_c,
                       kdf=lambda x: HKDF(x, CHACHA20_KEY_SIZE_BYTES, b'', SHA512, num_keys=2))
     h = SHA512.new(
         k_s.export_key(format="raw") + q_c.export_key(format="raw") + q_s.export_key(format="raw") + k[0] + k[1])

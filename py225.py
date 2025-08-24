@@ -19,12 +19,12 @@ from util import join_host_port, relay
 NAME: Literal["py225"] = "py225"
 
 
-class _Session:
+class Session:
     type session_info = tuple[datetime, list[int], NonceManager, NonceManager, bytes, bytes]
     expire: datetime
 
     lock: Lock
-    query_task: Task[session_info]
+    query_task: Task[session_info] | None
     next_query_task: Task[session_info] | None
     timer_task: Task
 
@@ -37,6 +37,7 @@ class _Session:
         self.private_key = private_key
         self.host_public_key = host_public_key
         self.lock = Lock()
+        self.query_task = None
 
     def get(self) -> Task[session_info]:
         if self.query_task is None:
@@ -52,6 +53,15 @@ class _Session:
             self.next_query_task = None
             self.query_task = create_task(self.query(), name=f"Query Task ({self.address})")
             return self.query_task
+
+    async def query_once(self):
+        """
+        Main purpose of this function is to query the server once on client start up,
+        but block exceptions raises in ``get`` function, because ``asyncio.gather(get())``
+        will fail if ``get`` raises any exception.
+        :return:
+        """
+        self.get()
 
     def expired(self):
         assert self.query_task.done() and self.query_task.exception() is None
@@ -109,16 +119,15 @@ class _Session:
         raise RuntimeError("unexpected code path")
 
 
-class _Server:
+class Server:
     def __init__(self, rec: config.ServerRecord):
         self.private_key = rec.private_key
         self.host_public_key = rec.host_public_key
-        self.sess = _Session((rec.host, rec.port), rec.private_key, rec.host_public_key)
-        self.sess.get()
+        self.sess = Session((rec.host, rec.port), rec.private_key, rec.host_public_key)
 
 
 class Py225:
-    servers: dict[tuple[str, int], _Server]
+    servers: dict[tuple[str, int], Server]
     tasks: set[Task]
     config: config.Client
 
@@ -127,18 +136,18 @@ class Py225:
 
         common.init(self, NAME)
         if not isinstance(self.config, config.Client):
-            logging.error("Bad config format")
+            logging.error("Bad config format.")
             sys.exit(1)
 
         for rec in self.config.servers:
-            self.servers[(rec.host, rec.port)] = _Server(rec)
+            self.servers[(rec.host, rec.port)] = Server(rec)
 
     async def listen_tcp(self):
         server = await asyncio.start_server(self.handle_tcp, self.config.listen_ip, self.config.listen_port)
         async with server:
             await server.serve_forever()
 
-    def choose_server(self) -> tuple[_Server, str]:
+    def choose_server(self) -> tuple[Server, str]:
         """
         For now only support 1 server
         """
@@ -162,7 +171,7 @@ class Py225:
         _, ports, mng, _, k1, k2 = res
         port = random.choice(ports)
         try:
-            rw2 = await asyncio.open_connection(host, port, timeout=5)
+            rw2 = await asyncio.open_connection(host, port)
         except Exception:
             logging.warning(f"Failed to connect to server: {join_host_port((host, port))}", exc_info=True)
             w.close()
@@ -182,13 +191,13 @@ class Py225:
             await tp.close()
             await w.wait_closed()
 
-    def start(self):
+    async def run(self):
         logging.info("py225 start up")
-        sess_gets = [self.servers[s].sess.get() for s in self.servers]
-        aws = [self.listen_tcp()] + sess_gets
-        asyncio.gather(*aws)
+        sess_queries = [self.servers[s].sess.query_once() for s in self.servers]
+        aws = [self.listen_tcp()] + sess_queries
+        await asyncio.gather(*aws)
 
 
 if __name__ == '__main__':
     instance = Py225()
-    instance.start()
+    asyncio.run(instance.run())

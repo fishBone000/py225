@@ -252,6 +252,7 @@ class Server(BaseConfig):
                     r[i] = float(p[:-1]) / 100
                 except Exception as e:
                     e.add_note(msg)
+                    raise
             if not 0 < r[i] < 1:
                 raise ValueError(msg)
         if self.percent_of_open_ports_range[0] > self.percent_of_open_ports_range[1]:
@@ -311,8 +312,8 @@ def load(p, name):
             with open(path) as f:
                 data = f.read()
             cfg = yaml.safe_load(data)
-            if not isinstance(cfg, Client):
-                raise ValueError("Bad config format.")
+            cfg.validate()
+            cfg.post_load()
             loaded = True
             break
         except FileNotFoundError:
