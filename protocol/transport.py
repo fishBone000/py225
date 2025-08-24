@@ -1,3 +1,4 @@
+import asyncio
 import os
 from asyncio import StreamReader, StreamWriter
 from dataclasses import dataclass
@@ -114,6 +115,8 @@ class TCPTransport:
     async def sendall(self, b: bytes):
         if len(b) > 0xFFFFFFFF:
             raise ValueError("packet too large")
+        if not b:
+            raise ValueError("Packet size cannot be zero.")
         if self.broken:
             raise RuntimeError("broken transport")
         if self.snd_nonce is not None and self.snd_nonce - self.initial_snd_nonce >= TCP_NONCE_STEP_SZ:
@@ -191,11 +194,21 @@ class TCPTransport:
         header_chacha = ChaCha20.new(key=self.k_1, nonce=nonce_buf)
         try:
             header = await self.r.readexactly(HEADER_SIZE_BYTES)
+        except asyncio.IncompleteReadError as e:
+            if self.initial_rcv_nonce == self.rcv_nonce or e.partial:
+                raise
+            self.broken = True # Transport is actually closed, setting as broken anyways
+            return b""
         except:
             self.broken = True
             raise
+
         ciphertext += header
         packet_sz = int.from_bytes(header_chacha.decrypt(header), byteorder="big", signed=False)
+        if packet_sz == 0:
+            self.broken = True
+            await self.close()
+            raise RuntimeError("Bad format: packet size cannot be zero.")
 
         try:
             data = await self.r.readexactly(packet_sz + POLY1305_TAG_SIZE_BYTES)

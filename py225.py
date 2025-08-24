@@ -181,9 +181,10 @@ class Py225:
         tp = TCPTransport(rw2, k1, k2, mng)
         try:
             await relay((r, w), tp)
+            logging.debug(f"Relay for TCP inbound {addr} finished.")
         except Exception:
             logging.warning(f"Error occurred while relaying "
-                            f"from client {addr} to server {join_host_port((host, port))}",
+                            f"from TCP inbound {addr} to server {join_host_port((host, port))}",
                             exc_info=True)
             raise
         finally:

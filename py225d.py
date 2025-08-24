@@ -209,6 +209,7 @@ class Py225d:
 
         try:
             await util.relay((r1, w1), tp)
+            logging.debug(f"Relay for client {join_host_port((ip, peer_port))} finished.")
         except Exception:
             logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed.", exc_info=True)
             raise
