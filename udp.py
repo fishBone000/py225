@@ -31,7 +31,7 @@ class AsyncSocket(DatagramProtocol):
             raise self.exc
         self.transport.sendto(data, addr)
 
-    def getextrainfo(self, name: str, default: Any | None = None):
+    def get_extra_info(self, name: str, default: Any | None = None):
         assert self.transport is not None, "Socket not opened"
         return self.transport.get_extra_info(name, default)
 

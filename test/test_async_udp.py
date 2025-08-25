@@ -12,8 +12,8 @@ class TestAsyncSocket(unittest.TestCase):
     async def do_test_async(self):
         s1 = await udp.open_connection(("127.0.0.1", 0))
         s2 = await udp.open_connection(("127.0.0.1", 0))
-        a1 = s1.getextrainfo("sockname")
-        a2 = s2.getextrainfo("sockname")
+        a1 = s1.get_extra_info("sockname")
+        a2 = s2.get_extra_info("sockname")
 
         for i in range(1000):
             with self.subTest(i=i):
