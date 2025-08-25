@@ -192,6 +192,9 @@ class Py225:
             await tp.close()
             await w.wait_closed()
 
+    async def listen_udp(self):
+        pass
+
     async def run(self):
         logging.info("py225 start up")
         sess_queries = [self.servers[s].sess.query_once() for s in self.servers]
