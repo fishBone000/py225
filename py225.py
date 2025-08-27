@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 import sys
-from asyncio import Lock, create_task, Task, StreamReader, StreamWriter, CancelledError
+from asyncio import Lock, create_task, Task, StreamReader, StreamWriter
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -13,8 +13,9 @@ from Crypto.PublicKey.ECC import EccKey
 import common
 import config
 import udp
+from common import UDPSession
 from protocol import servwin
-from protocol.transport import NonceManager, TCPTransport, UDPPacket
+from protocol.transport import NonceManager, TCPTransport
 from util import join_host_port, relay
 
 NAME: Literal["py225"] = "py225"
@@ -120,97 +121,6 @@ class Session:
         raise RuntimeError("unexpected code path")
 
 
-class UDPSession:
-    s: udp.AsyncSocket
-    s_app: udp.AsyncSocket
-    app_addr: tuple[str, int]
-    server_addr: tuple[str, int]
-    sess_dict: dict[tuple[str, int], UDPSession]
-    k1: bytes
-    k2: bytes
-    nonce_mng: NonceManager
-    expire: datetime
-    timer_task: Task
-    relay_task: Task
-
-    def __init__(self, sess_dict: dict[tuple[str, int], UDPSession], s_app: udp.AsyncSocket,
-                 k1: bytes, k2: bytes, nonce: NonceManager):
-        self.sess_dict = sess_dict
-        self.s_app = s_app
-        self.app_addr = s_app.get_extra_info("peername")
-        self.sess_dict[self.app_addr] = self
-        self.k1 = k1
-        self.k2 = k2
-        self.nonce_mng = nonce
-
-    def on_session_close(self):
-        self.sess_dict.pop(self.app_addr)
-        self.relay_task.cancel()
-        self.timer_task.cancel()
-        self.s.close()
-
-    async def timer(self):
-        first_run = True
-        ts = self.expire
-        while first_run or ts != self.expire:
-            first_run = False
-            ts = self.expire
-            await asyncio.sleep((ts - datetime.now()).total_seconds())
-
-        # Session expired
-        self.on_session_close()
-
-    async def relay(self):
-        """
-        Relay UDP from server to application.
-        """
-        while True:
-            try:
-                d, a = await self.s.recvfrom()
-            except CancelledError:
-                return
-            except Exception:
-                logging.exception(f"Receive UDP packet from server {join_host_port(self.server_addr)} "
-                                  f"for client {self.app_addr} failed.", exc_info=True)
-                return
-
-            if self.server_addr != a:
-                continue
-
-            try:
-                p = UDPPacket(d, self.k1, self.k2, self.nonce_mng)
-                plain = p.parse()
-            except Exception as e:
-                logging.warning(f"Parse UDP packet from server {join_host_port(self.server_addr)} "
-                                f"for client {self.app_addr} failed: {e}")
-                continue
-
-            self.expire = datetime.now() + timedelta(minutes=5)
-            try:
-                self.s_app.sendto(plain, self.app_addr)
-            except Exception:
-                logging.error(f"Send UDP packet to client {join_host_port(self.app_addr)} failed.", exc_info=True)
-                self.on_session_close()
-                return
-
-    def send(self, data: bytes):
-        p = UDPPacket(data, self.k1, self.k2, self.nonce_mng)
-
-        try:
-            d = p.build()
-            self.s.sendto(d, self.server_addr)
-        except Exception:
-            self.on_session_close()
-            raise
-        self.expire = datetime.now() + timedelta(minutes=5)
-
-    async def connect(self, addr: tuple[str, int]):
-        self.s = await udp.open_connection(remote_addr=addr)
-        self.server_addr = self.s.get_extra_info("peername")
-        self.timer_task = asyncio.create_task(self.timer())
-        self.relay_task = asyncio.create_task(self.relay())
-
-
 class Server:
     def __init__(self, rec: config.ServerRecord):
         self.private_key = rec.private_key
@@ -303,7 +213,7 @@ class Py225:
                     if not server.sess.get().done() or server.sess.get().exception():
                         continue
                     _, ports, _, nonce_mng, k1, k2 = server.sess.get()
-                    sess = UDPSession(self.udp_sessions, s, k1, k2, nonce_mng)
+                    sess = UDPSession("client", self.udp_sessions, s, k1, k2, nonce_mng)
 
                     try:
                         await sess.connect((server_addr[0], random.choice(ports)))
@@ -315,7 +225,7 @@ class Py225:
                     sess.send(d)
                 except Exception:
                     logging.exception(f"Relay UDP packet from client {join_host_port(addr)} "
-                                      f"to server {join_host_port(sess.server_addr)} failed.")
+                                      f"to server {join_host_port(sess.server_host_addr)} failed.")
 
         except Exception:
             logging.exception("Unexpected error occured when listening UDP from applications.")

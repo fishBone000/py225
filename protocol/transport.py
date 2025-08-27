@@ -26,7 +26,8 @@ class NonceDepletedError(Exception):
 class BadNonceError(Exception):
     pass
 
-
+# TODO: Fix TCP and UDP nonce overlaps
+# TODO: raise exceptions as needed
 class NonceManager:
     def __init__(self, step_sz, steps):
         self.step_sz = step_sz
@@ -237,6 +238,7 @@ class TCPTransport:
         await self.w.wait_closed()
 
 
+# TODO: Enhance exception handling for NonceManager in py225 and py225d
 @dataclass
 class UDPPacket:
     data: bytes
