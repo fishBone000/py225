@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import socket
 import sys
 from asyncio import Task, CancelledError
 from datetime import datetime, timedelta
@@ -56,8 +55,8 @@ def init(obj, name):
 
 
 class UDPSession:
-    s_server_host: udp.AsyncSocket | None = None # Socket to py225d server or target host
-    s_app_client: udp.AsyncSocket # Socket to application or py225 client
+    s_server_host: udp.AsyncSocket | None = None  # Socket to py225d server or target host
+    s_app_client: udp.AsyncSocket  # Socket to application or py225 client
     app_client_addr: tuple[str, int]
     server_host_addr: tuple[str, int] | None = None
     side: Literal["client", "server"]
@@ -109,12 +108,12 @@ class UDPSession:
         return self.s_server_host
 
     def __init__(self, side: Literal["client", "server"],
-                 s_app_client: udp.AsyncSocket,
+                 s_app_client: udp.AsyncSocket, app_client_addr: tuple[str, int],
                  k1: bytes, k2: bytes, nonce: NonceManager,
                  close_callback: Callable[[UDPSession], None]):
         self.side = side
         self.s_app_client = s_app_client
-        self.app_client_addr = s_app_client.get_extra_info("peername")
+        self.app_client_addr = app_client_addr
         self.k1 = k1
         self.k2 = k2
         self.nonce_mng = nonce
@@ -150,8 +149,9 @@ class UDPSession:
             except CancelledError:
                 return
             except Exception:
-                logging.exception(f"Receive UDP packet from {self.server_or_host} {join_host_port(self.server_host_addr)} "
-                                  f"for {self.app_or_client} {join_host_port(self.app_client_addr)} failed.", exc_info=True)
+                logging.exception(
+                    f"Receive UDP packet from {self.server_or_host} {join_host_port(self.server_host_addr)} "
+                    f"for {self.app_or_client} {join_host_port(self.app_client_addr)} failed.", exc_info=True)
                 return
 
             if self.server_host_addr != a:
@@ -181,9 +181,13 @@ class UDPSession:
         """
         Caller's responsibility to handle and log exceptions, but clean up is done by ``UDPSession``.
         """
-        p = UDPPacket(data, self.k1, self.k2, self.nonce_mng)
+        if self.side == "client":
+            p = UDPPacket(data, self.k1, self.k2, self.nonce_mng)
 
-        d = p.build()
+            d = p.build()
+        else:
+            d = data
+
         try:
             self.s_server_host.sendto(d, self.server_host_addr)
         except Exception:

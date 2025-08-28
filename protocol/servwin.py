@@ -6,11 +6,13 @@ from Crypto.Signature import eddsa
 from construct import Struct, Int32ub, Int16ub
 
 from protocol import ED25519_KEY_SIZE_BYTES, ED25519_EDDSA_SIZE_BYTES, kex
-from protocol.transport import SecurityError, TCPTransport
+from protocol.transport import TCPTransport
 from protocol.util import import_raw_ed25519_public_key
 
 MIN_EXPIRE_SECONDS = 1800  # 30 mins
 
+
+# TODO: Enhance exception raises
 
 def get_struct(num_ports):
     return Struct(
@@ -74,7 +76,7 @@ async def feed(rw: tuple[StreamReader, StreamWriter],
     verifier.verify(h, peer_sign)
 
     if not peer_pub_key in accepted_keys:
-        raise SecurityError("Authenticate failed: client public key not in allow list")
+        raise RuntimeError("Authenticate failed: client public key not in allow list")
 
     await tp.sendall(build(sec_til_expire, ports))
 

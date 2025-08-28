@@ -40,6 +40,7 @@ class Session:
         self.host_public_key = host_public_key
         self.lock = Lock()
         self.query_task = None
+        self.next_query_task = None
 
     def get(self) -> Task[session_info]:
         if self.query_task is None:
@@ -48,7 +49,7 @@ class Session:
         else:
             if not self.query_task.done() or self.query_task.exception() is None and not self.expired():
                 return self.query_task
-            if not self.next_query_task.done() or self.next_query_task.exception() is None:
+            if self.next_query_task and (not self.next_query_task.done() or self.next_query_task.exception() is None):
                 self.query_task = self.next_query_task
                 self.next_query_task = None
                 return self.query_task
@@ -152,13 +153,13 @@ class Py225:
         async with server:
             await server.serve_forever()
 
-    def choose_server(self) -> tuple[Server, str]:
+    def choose_server(self) -> tuple[Server, tuple[str, int]]:
         """
         For now only support 1 server
         """
         rec = self.config.servers[0]
         addr = (rec.host, rec.port)
-        return self.servers[addr], addr[0]
+        return self.servers[addr], addr
 
     async def handle_tcp(self, r: StreamReader, w: StreamWriter):
         addr = join_host_port(w.get_extra_info("peername"))
@@ -209,20 +210,22 @@ class Py225:
                 raise
 
             while True:
-                d, addr = s.recvfrom()
+                d, addr = await s.recvfrom()
                 sess = self.udp_sessions.get(addr)
                 if sess is None:
                     server, server_addr = self.choose_server()
                     if not server.sess.get().done() or server.sess.get().exception():
                         continue
-                    _, ports, _, nonce_mng, k1, k2 = server.sess.get()
-                    sess = UDPSession("client", s, k1, k2, nonce_mng, self.on_udp_session_close)
+                    _, ports, _, nonce_mng, k1, k2 = await server.sess.get()
+                    sess = UDPSession("client", s, addr, k1, k2, nonce_mng, self.on_udp_session_close)
 
                     try:
                         await sess.connect((server_addr[0], random.choice(ports)))
                     except Exception:
                         logging.exception(f"Failed to create UDP socket to server for client {join_host_port(addr)}.")
                         continue
+                    else:
+                        self.udp_sessions[addr] = sess
 
                 try:
                     sess.send(d)

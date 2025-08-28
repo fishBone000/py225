@@ -179,13 +179,13 @@ class PortsManager:
     def on_udp_session_close(self, sess: UDPSession):
         self.udp_sessions_by_client_addr.pop(sess.client_addr)
         task = self.udp_task_by_session.pop(sess)
-        if task in self.udp_sessions_by_task: # If the task is running
+        if task in self.udp_sessions_by_task:  # If the task is running
             sessions = self.udp_sessions_by_task[task]
             sessions.remove(sess)
-            if len(sessions) == 0: # If no sessions left for this task
+            if len(sessions) == 0:  # If no sessions left for this task
                 _, port = sess.s_client.get_extra_info("sockname")
-                if port not in self.tcp_tasks.keys(): # If task stayed running because of previous unfinished sessions
-                    task.cancel() # Stop this task
+                if port not in self.tcp_tasks.keys():  # If task stayed running because of previous unfinished sessions
+                    task.cancel()  # Stop this task
 
     def close_udp_sessions_of_task(self, task: Task):
         sessions = self.udp_sessions_by_task[task]
@@ -230,11 +230,12 @@ class PortsManager:
                         logging.warning(f"Parse UDP packet from client {join_host_port(addr)} failed: {e}")
                         continue
 
-                    udp_sess = UDPSession("server", s, sess.k1, sess.k2, sess.udp_mng, self.on_udp_session_close)
+                    udp_sess = UDPSession("server", s, addr, sess.k1, sess.k2, sess.udp_mng, self.on_udp_session_close)
                     try:
                         await udp_sess.connect(host_addr)
                     except Exception:
-                        logging.exception(f"Open UDP socket to host {host_addr} for client {join_host_port(addr)} failed.")
+                        logging.exception(
+                            f"Open UDP socket to host {host_addr} for client {join_host_port(addr)} failed.")
                         return
                     else:
                         self.udp_sessions_by_task[task].add(udp_sess)

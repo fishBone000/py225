@@ -1,4 +1,3 @@
-import asyncio
 from asyncio import StreamReader, StreamWriter, TaskGroup
 
 from protocol.transport import TCPTransport, TCP_TRANSPORT_MAX_SIZE_BYTES

@@ -7,11 +7,13 @@ import util
 from protocol import CHACHA20_KEY_SIZE_BYTES
 from protocol.transport import NonceManager, TCPTransport
 
+
 async def rwpair():
     s1, s2 = socket.socketpair()
     r1, w1 = await asyncio.open_connection(sock=s1)
     r2, w2 = await asyncio.open_connection(sock=s2)
     return r1, w1, r2, w2
+
 
 class TestRelay(unittest.TestCase):
     def test_relay(self):

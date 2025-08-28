@@ -1,7 +1,7 @@
 import asyncio
+import socket
 from asyncio import DatagramProtocol, DatagramTransport
 from typing import Any
-import socket
 
 
 class AsyncSocket(DatagramProtocol):
@@ -45,7 +45,9 @@ class AsyncSocket(DatagramProtocol):
         self.queue.shutdown()
         self.transport = None
 
-async def open_connection(local_addr: tuple[str, int] | None = None, remote_addr: tuple[str, int] | None = None) -> AsyncSocket:
+
+async def open_connection(local_addr: tuple[str, int] | None = None,
+                          remote_addr: tuple[str, int] | None = None) -> AsyncSocket:
     loop = asyncio.get_running_loop()
     _, s = await loop.create_datagram_endpoint(AsyncSocket, local_addr, remote_addr, family=socket.AF_INET)
     return s
