@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import socket
 import sys
 from asyncio import Task, CancelledError
 from datetime import datetime, timedelta
@@ -12,6 +13,7 @@ import config
 import log
 import udp
 from protocol.transport import NonceManager, UDPPacket
+from udp import AsyncSocket
 from util import join_host_port
 
 
@@ -65,6 +67,46 @@ class UDPSession:
     expire: datetime
     timer_task: Task | None = None
     relay_task: Task | None = None
+
+    @property
+    def app_addr(self) -> tuple[str, int]:
+        assert self.side == "client"
+        return self.app_client_addr
+
+    @property
+    def client_addr(self) -> tuple[str, int]:
+        assert self.side == "server"
+        return self.app_client_addr
+
+    @property
+    def server_addr(self) -> tuple[str, int]:
+        assert self.side == "client"
+        return self.server_host_addr
+
+    @property
+    def host_addr(self) -> tuple[str, int]:
+        assert self.side == "server"
+        return self.server_host_addr
+
+    @property
+    def s_app(self) -> AsyncSocket:
+        assert self.side == "client"
+        return self.s_app_client
+
+    @property
+    def s_client(self) -> AsyncSocket:
+        assert self.side == "server"
+        return self.s_app_client
+
+    @property
+    def s_server(self) -> AsyncSocket:
+        assert self.side == "client"
+        return self.s_server_host
+
+    @property
+    def s_host(self) -> AsyncSocket:
+        assert self.side == "server"
+        return self.s_server_host
 
     def __init__(self, side: Literal["client", "server"],
                  s_app_client: udp.AsyncSocket,

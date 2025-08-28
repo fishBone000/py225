@@ -177,13 +177,13 @@ class PortsManager:
             await w.wait_closed()
 
     def on_udp_session_close(self, sess: UDPSession):
-        self.udp_sessions_by_client_addr.pop(sess.app_client_addr)
+        self.udp_sessions_by_client_addr.pop(sess.client_addr)
         task = self.udp_task_by_session.pop(sess)
         if task in self.udp_sessions_by_task: # If the task is running
             sessions = self.udp_sessions_by_task[task]
             sessions.remove(sess)
             if len(sessions) == 0: # If no sessions left for this task
-                _, port = sess.s_app_client.get_extra_info("sockname")
+                _, port = sess.s_client.get_extra_info("sockname")
                 if port not in self.tcp_tasks.keys(): # If task stayed running because of previous unfinished sessions
                     task.cancel() # Stop this task
 

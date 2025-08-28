@@ -198,7 +198,7 @@ class Py225:
             await w.wait_closed()
 
     def on_udp_session_close(self, sess: UDPSession):
-        self.udp_sessions.pop(sess.app_client_addr)
+        self.udp_sessions.pop(sess.app_addr)
 
     async def listen_udp(self):
         try:
@@ -228,7 +228,7 @@ class Py225:
                     sess.send(d)
                 except Exception:
                     logging.exception(f"Relay UDP packet from client {join_host_port(addr)} "
-                                      f"to server {join_host_port(sess.server_host_addr)} failed.")
+                                      f"to server {join_host_port(sess.server_addr)} failed.")
 
         except Exception:
             logging.exception("Unexpected error occured when listening UDP from applications.")
