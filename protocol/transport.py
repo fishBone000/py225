@@ -22,7 +22,7 @@ UDP_BEGIN_NONCE = 0x80000000_00000000_00000000
 UDP_MAX_NONCE = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF
 
 
-class SecurityError(Exception):
+class UnauthenticTag(Exception):
     pass
 
 
@@ -31,6 +31,10 @@ class NonceDepletedError(Exception):
 
 
 class BadNonceError(Exception):
+    pass
+
+
+class UnexpectedNonceError(Exception):
     pass
 
 
@@ -50,18 +54,19 @@ class NonceManager:
         self.next_send = self.begin_nonce = begin_nonce
         self.max_nonce = max_nonce
 
-    def check_recv(self, n) -> bool:
+    def check_recv(self, n):
         """
         Checks if received nonce is valid.
         :param n: The nonce.
-        :return: True if nonce is valid, False otherwise.
-        :raises BadNonceError: If the nonce is not expected to be received, e.g. it's not allowed in protocol.
+        :return: None.
+        :raises BadNonceError: If nonce is invalid.
+        :raises UnexpectedNonceError: If the nonce is not expected to be received, e.g. it's not allowed in protocol.
         """
         assert n > 0
         if (n - self.begin_nonce) % self.step_sz != 0:
-            raise BadNonceError
+            raise UnexpectedNonceError
         if n > self.max_nonce or n < self.begin_nonce:
-            raise BadNonceError
+            raise UnexpectedNonceError
 
         # If received nonce is outside the congestion window,
         # we need to update the window by updating recv_set
@@ -80,18 +85,18 @@ class NonceManager:
                 for i in range(self.recv_upper + self.step_sz, n, self.step_sz):
                     self.recv_set.add(i)
             self.recv_upper = n
-            return True
+            return
 
         # If received nonce is too old
         if n < max(0, self.recv_upper - self.steps * self.step_sz):
-            return False
+            raise BadNonceError
 
         # Received nonce falls in the congestion window
         try:
             self.recv_set.remove(n)
         except KeyError:
-            return False
-        return True
+            raise BadNonceError
+        return
 
     def gen_send(self) -> int:
         """
@@ -117,7 +122,7 @@ class NonceManager:
         if mode == "tcp":
             return NonceManager(TCP_NONCE_STEP_SZ, TCP_NONCE_STEPS, TCP_BEGIN_NONCE, TCP_MAX_NONCE)
         else:
-            return NonceManager(TCP_NONCE_STEP_SZ, TCP_NONCE_STEPS, TCP_BEGIN_NONCE, TCP_MAX_NONCE)
+            return NonceManager(UDP_NONCE_STEP_SZ, UDP_NONCE_STEPS, UDP_BEGIN_NONCE, UDP_MAX_NONCE)
 
 
 # TODO: mem operation can be optimized, e.g. r/w on single bytearray instance?
