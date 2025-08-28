@@ -50,10 +50,14 @@ class TestRelay(unittest.TestCase):
         finally:
             w_app.close()
             w_c_s.close()
+            w_s_t.close()
+            w_c_a.close()
             w_s_c.close()
             w_t.close()
 
             await w_app.wait_closed()
             await w_c_s.wait_closed()
+            await w_s_t.wait_closed()
+            await w_c_a.wait_closed()
             await w_s_c.wait_closed()
             await w_t.wait_closed()

@@ -2,6 +2,7 @@ import asyncio
 import os
 from asyncio import StreamReader, StreamWriter
 from dataclasses import dataclass
+from typing import Literal
 
 from Crypto.Cipher import AES, ChaCha20
 from Crypto.Hash import Poly1305
@@ -13,6 +14,12 @@ HEADER_SIZE_BYTES = 4
 
 TCP_NONCE_STEP_SZ = 2 ** 12
 TCP_NONCE_STEPS = 2000
+TCP_BEGIN_NONCE = 10
+UDP_NONCE_STEP_SZ = 1
+UDP_NONCE_STEPS = 2000
+TCP_MAX_NONCE = 0x7FFFFFFF_FFFFFFFF_FFFFFFFF
+UDP_BEGIN_NONCE = 0x80000000_00000000_00000000
+UDP_MAX_NONCE = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF
 
 
 class SecurityError(Exception):
@@ -26,22 +33,35 @@ class NonceDepletedError(Exception):
 class BadNonceError(Exception):
     pass
 
-# TODO: Fix TCP and UDP nonce overlaps
-# TODO: raise exceptions as needed
+
 class NonceManager:
-    def __init__(self, step_sz, steps):
+    def __init__(self, step_sz, steps, begin_nonce, max_nonce):
+        """
+        It's not intended to call __init__ directly.
+        Use ``NonceManager.new()`` instead.
+        """
         self.step_sz = step_sz
         self.steps = steps
         self.win_sz = step_sz * steps
 
-        self.recv_upper = step_sz
-        self.recv_set = {step_sz}
+        self.recv_upper = begin_nonce
+        self.recv_set = {begin_nonce}
 
-        self.next_send = step_sz
+        self.next_send = self.begin_nonce = begin_nonce
+        self.max_nonce = max_nonce
 
-    def check_recv(self, n):
-        if n % self.step_sz != 0:
-            raise ValueError("bad nonce")
+    def check_recv(self, n) -> bool:
+        """
+        Checks if received nonce is valid.
+        :param n: The nonce.
+        :return: True if nonce is valid, False otherwise.
+        :raises BadNonceError: If the nonce is not expected to be received, e.g. it's not allowed in protocol.
+        """
+        assert n > 0
+        if (n - self.begin_nonce) % self.step_sz != 0:
+            raise BadNonceError
+        if n > self.max_nonce or n < self.begin_nonce:
+            raise BadNonceError
 
         # If received nonce is outside the congestion window,
         # we need to update the window by updating recv_set
@@ -74,19 +94,30 @@ class NonceManager:
         return True
 
     def gen_send(self) -> int:
+        """
+        Generate a nonce for sending.
+        :return: The nonce.
+        :raises NonceDepletedError: If no more nonces are available.
+        """
         nonce = self.next_send
+        if nonce > self.max_nonce:
+            raise NonceDepletedError
         self.next_send += self.step_sz
         return nonce
 
     @classmethod
-    def new(cls, mode):
-        if mode not in ["udp", "tcp"]:
-            raise ValueError("mode must be \"udp\" or \"tcp\"")
+    def new(cls, mode: Literal["udp", "tcp"]):
+        """
+        Creates a NonceManager instance.
+        :param mode: Must be "udp" or "tcp".
+        :return: NonceManager
+        """
+        assert mode in ["udp", "tcp"]
 
         if mode == "tcp":
-            return NonceManager(TCP_NONCE_STEP_SZ, TCP_NONCE_STEPS)
+            return NonceManager(TCP_NONCE_STEP_SZ, TCP_NONCE_STEPS, TCP_BEGIN_NONCE, TCP_MAX_NONCE)
         else:
-            return NonceManager(1, 2000)
+            return NonceManager(TCP_NONCE_STEP_SZ, TCP_NONCE_STEPS, TCP_BEGIN_NONCE, TCP_MAX_NONCE)
 
 
 # TODO: mem operation can be optimized, e.g. r/w on single bytearray instance?
@@ -198,7 +229,7 @@ class TCPTransport:
         except asyncio.IncompleteReadError as e:
             if self.initial_rcv_nonce == self.rcv_nonce or e.partial:
                 raise
-            self.broken = True # Transport is actually closed, setting as broken anyways
+            self.broken = True  # Transport is actually closed, setting as broken anyways
             return b""
         except:
             self.broken = True
