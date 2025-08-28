@@ -22,7 +22,7 @@ UDP_BEGIN_NONCE = 0x80000000_00000000_00000000
 UDP_MAX_NONCE = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF
 
 
-class UnauthenticTag(Exception):
+class UnauthenticTagError(Exception):
     pass
 
 
@@ -35,6 +35,10 @@ class BadNonceError(Exception):
 
 
 class UnexpectedNonceError(Exception):
+    pass
+
+
+class FormatError(Exception):
     pass
 
 
@@ -150,6 +154,13 @@ class TCPTransport:
         self.broken = False
 
     async def sendall(self, b: bytes):
+        """
+        Sends data via TCP.
+        :param b: Data.
+        :raises ValueError: If data is too large, or zero sized.
+        :raises RuntimeError: If the transport is broken, e.g. there was a previous error.
+        :raises NonceDepletedError: If nonce is depleted for this TCP connection or client-server session.
+        """
         if len(b) > 0xFFFFFFFF:
             raise ValueError("packet too large")
         if not b:
@@ -158,14 +169,18 @@ class TCPTransport:
             raise RuntimeError("broken transport")
         if self.snd_nonce is not None and self.snd_nonce - self.initial_snd_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
-            self.w.close()
-            await self.w.wait_closed()
+            await self.close()
             raise NonceDepletedError
 
         data = b''
         # If it's the first packet, generate a nonce and send encrypted nonce first
         if self.snd_nonce is None:
-            self.initial_snd_nonce = self.snd_nonce = self.mng.gen_send()
+            try:
+                self.initial_snd_nonce = self.snd_nonce = self.mng.gen_send()
+            except NonceDepletedError:
+                self.broken = True
+                await self.close()
+                raise
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
             data += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
@@ -194,6 +209,17 @@ class TCPTransport:
         self.snd_nonce += 1
 
     async def recv(self) -> bytes:
+        """
+        Receives single packet.
+        :return: Data in packet. Zero length ``bytes`` if EOF received.
+        :raises RuntimeError: If transport is broken, e.g. there was a previous error.
+        :raises FormatError: If received packet has zero length size.
+        :raises NonceDepletedError: If nonce is depleted for this TCP connection or client-server session.
+        :raises UnauthenticTagError: If tag in received packet is invalid.
+        :raises asyncio.IncompleteReadError: If EOF received before receiving the whole packet
+        :raises BadNonceError: If nonce is invalid.
+        :raises UnexpectedNonceError: If received nonce is not expected, e.g. protocol doesn't allow it.
+        """
         if self.broken:
             raise RuntimeError("broken transport")
         if self.rcv_nonce is not None and self.rcv_nonce - self.initial_rcv_nonce >= TCP_NONCE_STEP_SZ:
@@ -218,13 +244,15 @@ class TCPTransport:
             if not timingsafe_bcmp(tag, expected):
                 self.broken = True
                 await self.close()
-                raise SecurityError("tag mismatch")
+                raise UnauthenticTagError
 
             nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
-            if not self.mng.check_recv(nonce):
+            try:
+                self.mng.check_recv(nonce)
+            except (BadNonceError, UnexpectedNonceError):
                 self.broken = True
                 await self.close()
-                raise BadNonceError
+                raise
             self.initial_rcv_nonce = self.rcv_nonce = nonce + 1
 
         nonce_buf = self.rcv_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big", signed=False)
@@ -234,9 +262,9 @@ class TCPTransport:
         except asyncio.IncompleteReadError as e:
             if self.initial_rcv_nonce == self.rcv_nonce or e.partial:
                 raise
-            self.broken = True  # Transport is actually closed, setting as broken anyways
+            self.broken = True  # Transport is actually closed, setting as broken anyway
             return b""
-        except:
+        except Exception:
             self.broken = True
             raise
 
@@ -245,11 +273,11 @@ class TCPTransport:
         if packet_sz == 0:
             self.broken = True
             await self.close()
-            raise RuntimeError("Bad format: packet size cannot be zero.")
+            raise FormatError
 
         try:
             data = await self.r.readexactly(packet_sz + POLY1305_TAG_SIZE_BYTES)
-        except:
+        except Exception:
             self.broken = True
             raise
         payload = data[:packet_sz]
@@ -260,7 +288,7 @@ class TCPTransport:
         if not timingsafe_bcmp(tag, expected_tag):
             self.broken = True
             await self.close()
-            raise SecurityError("tag mismatch")
+            raise UnauthenticTagError
 
         data_chacha = ChaCha20.new(key=self.k_2, nonce=nonce_buf)
         plain = data_chacha.decrypt(payload)
@@ -283,6 +311,13 @@ class UDPPacket:
     nonce_mng: NonceManager
 
     def build(self) -> bytes:
+        """
+        Build the UDP packet based on provided attributes.
+
+        The ``data`` attribute holds the plaintext and is not altered in the process.
+        :return: The built packet.
+        :raises NonceDepletedError: If nonce is depleted.
+        """
         nonce = self.nonce_mng.gen_send()
         buf = b""
 
@@ -297,9 +332,19 @@ class UDPPacket:
 
         return buf
 
-    def parse(self):
+    def parse(self) -> bytes:
+        """
+        Parses the UDP packet based on provided attributes.
+
+        ``data`` attribute holds the whole packet and is not altered in the process.
+        :return: The plaintext.
+        :raises FormatError: If packet format is invalid.
+        :raises UnauthenticTagError: If tag is invalid.
+        :raises BadNonceError: If nonce is invalid.
+        :raises UnexpectedNonceError: If nonce is not expected.
+        """
         if len(self.data) <= AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES:
-            raise ValueError("bad format")
+            raise FormatError
 
         aes = AES.new(self.k1, mode=AES.MODE_ECB)
         nonce_buf = aes.decrypt(self.data[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
@@ -309,10 +354,9 @@ class UDPPacket:
         expected = Poly1305.new(key=self.k2, cipher=ChaCha20, nonce=nonce_buf,
                                 data=self.data[:-POLY1305_TAG_SIZE_BYTES]).digest()
         if not timingsafe_bcmp(expected, tag):
-            raise SecurityError("tag mismatch")
+            raise UnauthenticTagError
 
-        if not self.nonce_mng.check_recv(nonce):
-            raise BadNonceError
+        self.nonce_mng.check_recv(nonce)
 
         chacha = ChaCha20.new(key=self.k2, nonce=nonce_buf)
         return chacha.decrypt(self.data[AES_BLOCK_SIZE_BYTES:-POLY1305_TAG_SIZE_BYTES])
