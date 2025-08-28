@@ -1,7 +1,7 @@
 import asyncio
 from asyncio import StreamReader, StreamWriter, TaskGroup
 
-from protocol.transport import TCPTransport
+from protocol.transport import TCPTransport, TCP_TRANSPORT_MAX_SIZE_BYTES
 
 
 def join_host_port(addr: tuple[str, int]) -> str:
@@ -29,7 +29,10 @@ async def relay(rw: tuple[StreamReader, StreamWriter], t: TCPTransport):
 async def relay_s2t(r: StreamReader, t: TCPTransport):
     d = await r.read(4096)
     while d:
-        await t.sendall(d)
+        while d:
+            snd = d[:min(len(d), TCP_TRANSPORT_MAX_SIZE_BYTES)]
+            await t.sendall(snd)
+            d = d[len(snd):]
         d = await r.read(4096)
     raise __TerminateTaskGroup
 

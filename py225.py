@@ -197,12 +197,15 @@ class Py225:
             await tp.close()
             await w.wait_closed()
 
+    def on_udp_session_close(self, sess: UDPSession):
+        self.udp_sessions.pop(sess.app_client_addr)
+
     async def listen_udp(self):
         try:
             try:
                 s = await udp.open_connection(local_addr=(self.config.listen_ip, self.config.listen_port))
             except Exception:
-                logging.error("Failed to open UDP socket for applications.")
+                logging.exception("Failed to open UDP socket for applications.")
                 raise
 
             while True:
@@ -213,7 +216,7 @@ class Py225:
                     if not server.sess.get().done() or server.sess.get().exception():
                         continue
                     _, ports, _, nonce_mng, k1, k2 = server.sess.get()
-                    sess = UDPSession("client", self.udp_sessions, s, k1, k2, nonce_mng)
+                    sess = UDPSession("client", s, k1, k2, nonce_mng, self.on_udp_session_close)
 
                     try:
                         await sess.connect((server_addr[0], random.choice(ports)))

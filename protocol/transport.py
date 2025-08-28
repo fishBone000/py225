@@ -11,7 +11,7 @@ from protocol import CHACHA20_NONCE_SIZE_BYTES, AES_BLOCK_SIZE_BYTES, POLY1305_T
 from protocol.util import timingsafe_bcmp
 
 HEADER_SIZE_BYTES = 4
-
+TCP_TRANSPORT_MAX_SIZE_BYTES = 0xFFFFFFFF
 TCP_NONCE_STEP_SZ = 2 ** 12
 TCP_NONCE_STEPS = 2000
 TCP_BEGIN_NONCE = 10
@@ -161,7 +161,7 @@ class TCPTransport:
         :raises RuntimeError: If the transport is broken, e.g. there was a previous error.
         :raises NonceDepletedError: If nonce is depleted for this TCP connection or client-server session.
         """
-        if len(b) > 0xFFFFFFFF:
+        if len(b) > TCP_TRANSPORT_MAX_SIZE_BYTES:
             raise ValueError("packet too large")
         if not b:
             raise ValueError("Packet size cannot be zero.")

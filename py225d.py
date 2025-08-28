@@ -122,7 +122,7 @@ class PortsManager:
                     self.tcp_tasks[p].cancel()
                     # We don't cancel UDP task here, the tasks are cancelled when all bond UDP sessions ended.
                 self.next_ports = None
-        except Exception as e:
+        except Exception:
             logging.exception("Unexpected error occurred!")
             raise
 
@@ -131,7 +131,7 @@ class PortsManager:
         try:
             s = await asyncio.start_server(self.handle_tcp, cfg.listen_ip, port)
         except Exception:
-            logging.exception(f"Open TCP port {port} for data inbound failed")
+            logging.exception(f"Open TCP port {port} for data inbound failed.")
             return
 
         try:
@@ -144,11 +144,13 @@ class PortsManager:
     async def handle_tcp(self, r: StreamReader, w: StreamWriter):
         cfg = self.py225d.config
         ip, peer_port = w.get_extra_info("peername")
-        _, port = w.get_extra_info("sockname")
+        our_ip, port = w.get_extra_info("sockname")
         sess = self.py225d.sess_mng.get_session(ip)
+        client_addr = join_host_port((ip, peer_port))
+        logging.debug(f"New TCP connection from {client_addr} to {join_host_port((our_ip, port))}.")
         if sess is None:
             w.close()
-            logging.warning(f"Denied data connection from {join_host_port((ip, peer_port))} to port {port}: "
+            logging.warning(f"Denied TCP connection from {client_addr} to {join_host_port((our_ip, port))}: "
                             f"session not created for this IP.")
             await w.wait_closed()
             return
@@ -159,7 +161,7 @@ class PortsManager:
         try:
             r1, w1 = await asyncio.open_connection(cfg.connect_host, cfg.connect_port)
         except Exception:
-            logging.warning(f"Connect to target host failed", exc_info=True)
+            logging.warning(f"Connect to target host for client {client_addr} failed", exc_info=True)
             await tp.close()
             return
 
@@ -168,7 +170,7 @@ class PortsManager:
             logging.debug(f"Relay for client {join_host_port((ip, peer_port))} finished.")
         except Exception:
             logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed.", exc_info=True)
-            raise
+            return
         finally:
             w.close()
             await tp.close()
