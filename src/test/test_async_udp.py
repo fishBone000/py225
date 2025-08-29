@@ -2,8 +2,7 @@ import asyncio
 import os
 import unittest
 
-import udp
-
+from py225 import udp
 
 class TestAsyncSocket(unittest.TestCase):
     def test_async(self):

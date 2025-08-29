@@ -4,8 +4,8 @@ import random
 import socket
 import unittest
 
-from protocol import CHACHA20_KEY_SIZE_BYTES
-from protocol.transport import TCPTransport, NonceManager, UDPPacket
+from py225.protocol import CHACHA20_KEY_SIZE_BYTES
+from py225.protocol.transport import TCPTransport, NonceManager, UDPPacket
 
 
 def prepare_key_and_mng():
