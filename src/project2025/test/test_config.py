@@ -3,7 +3,7 @@ import unittest
 import yaml
 from Crypto.PublicKey.ECC import generate, EccKey
 
-from py225 import config
+from .. import config
 
 
 def gen():

@@ -4,7 +4,7 @@ import unittest
 
 from Crypto.PublicKey import ECC
 
-from py225.protocol import kex
+from ..protocol import kex
 
 
 class TestKex(unittest.TestCase):

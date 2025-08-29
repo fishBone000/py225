@@ -3,9 +3,9 @@ import os
 import socket
 import unittest
 
-from py225 import util
-from py225.protocol import CHACHA20_KEY_SIZE_BYTES
-from py225.protocol.transport import NonceManager, TCPTransport
+from .. import util
+from ..protocol import CHACHA20_KEY_SIZE_BYTES
+from ..protocol.transport import NonceManager, TCPTransport
 
 
 async def rwpair():
