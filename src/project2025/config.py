@@ -284,15 +284,14 @@ def get_default_cfg_paths(name: Literal["py225", "py225d", "py225-gui"]) -> list
                 dirs.append(os.getenv("XDG_DATA_HOME") + "/py225")
             elif os.getenv("HOME"):
                 dirs.append(os.getenv("HOME") + "/.local/share/py225")
+            dirs.append("/etc")
         case "win32":
             if os.getenv("LocalAppData"):
                 dirs.append(os.getenv("LocalAppData") + "\\py225")
     dirs.append(os.getcwd())
     if getattr(sys, 'frozen', False):
-        # PyInstaller 或类似工具生成的 exe 路径
         dirs.append(os.path.dirname(sys.executable))
     else:
-        # 普通脚本运行时，获取当前脚本的绝对路径
         script_path = os.path.abspath(sys.argv[0])
         dirs.append(os.path.dirname(script_path))
 
@@ -304,6 +303,7 @@ def get_default_cfg_paths(name: Literal["py225", "py225d", "py225-gui"]) -> list
     return paths
 
 
+# TODO: Add limit config file permission on Linux
 def load(p, name):
     paths = [p] if p is not None else get_default_cfg_paths(name)
     loaded = False
