@@ -27,6 +27,7 @@ def default_log_handler() -> Handler:
 
 
 def setup(name: str, log_path: str | None, lvl: str | int | None) -> Logger:
+    fmt = "%(levelname)s %(asctime)s %(message)s"
     match log_path:
         case "stderr":
             handler = StreamHandler(stream=sys.stderr)
@@ -34,14 +35,17 @@ def setup(name: str, log_path: str | None, lvl: str | int | None) -> Logger:
             if sys.platform != "linux":
                 raise RuntimeError("only Linux systems support syslog")
             handler = SysLogHandler(address="/dev/log")
+            fmt = "%(message)s"
         case "nt":
             if sys.platform != "win32":
                 raise RuntimeError("only Windows systems support NT Event Log")
             handler = NTEventLogHandler(appname="py225")
+            fmt = "%(message)s"
         case None:
             handler = default_log_handler()
         case _:
             handler = FileHandler(log_path)
+    handler.setFormatter(Formatter(fmt))
 
     if lvl is not None:
         try:
