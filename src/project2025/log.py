@@ -9,6 +9,7 @@ def gen_log_file_name() -> str:
     return f"py225-{os.getpid()}-{datetime.now().strftime("%Y-%m-%d-%H:%M")}.log"
 
 
+# TODO: Add timestamp for stderr
 def default_log_handler() -> Handler:
     match sys.platform:
         case "linux":

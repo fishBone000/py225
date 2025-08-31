@@ -48,7 +48,7 @@ def init(obj, name):
             logging.warning(f"Invalid verbosity: {e}")
 
     try:
-        logging.root = log.setup(name, args.log, verbosity)
+        logging.root = log.setup(name, args.log or obj.config.log, verbosity)
     except Exception as e:
         logging.error("Failed to set up logger.", exc_info=True)
         sys.exit(1)

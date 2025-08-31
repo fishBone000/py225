@@ -149,7 +149,7 @@ class ServerRecord(BaseConfig):
 @dataclass
 class Client(BaseConfig):
     servers: list[ServerRecord]
-    log: str
+    log: str | None
     verbosity: str
     listen_ip: str
     listen_port: int
@@ -185,7 +185,7 @@ class Server(BaseConfig):
     connect_host: str
     connect_port: int
 
-    log: str
+    log: str | None
     verbosity: str
 
     private_key: EccKey | str
