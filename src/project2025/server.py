@@ -15,7 +15,7 @@ from . import util
 from .common import UDPSession
 from .protocol import servwin
 from .protocol.transport import TCPTransport, NonceManager, UDPPacket
-from .util import join_host_port
+from .util import join_host_port, conn_err_str
 
 NAME = "py225d"
 
@@ -160,17 +160,24 @@ class PortsManager:
 
         try:
             r1, w1 = await asyncio.open_connection(cfg.connect_host, cfg.connect_port)
+        except ConnectionError as e:
+            logging.warning(f"Connect to target host for client {client_addr} failed: {conn_err_str(e)}.")
+            await tp.close()
+            return
         except Exception:
-            logging.warning(f"Connect to target host for client {client_addr} failed", exc_info=True)
+            logging.warning(f"Connect to target host for client {client_addr} failed.", exc_info=True)
             await tp.close()
             return
 
         try:
             await util.relay((r1, w1), tp)
             logging.debug(f"Relay for client {join_host_port((ip, peer_port))} finished.")
+        except ConnectionError as e:
+            logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed: {conn_err_str(e)}.")
+        except EOFError:
+            logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed: EOF.")
         except Exception:
             logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed.", exc_info=True)
-            return
         finally:
             w.close()
             await tp.close()

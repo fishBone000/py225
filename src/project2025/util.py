@@ -43,3 +43,16 @@ async def relay_t2s(t: TCPTransport, w: StreamWriter):
         await w.drain()
         d = await t.recv()
     raise __TerminateTaskGroup
+
+def conn_err_str(e: ConnectionError) -> str:
+    match e:
+        case ConnectionResetError():
+            return "connection reset"
+        case ConnectionRefusedError():
+            return "connection refused"
+        case ConnectionAbortedError():
+            return "connection aborted"
+        case BrokenPipeError():
+            return "broken pipe"
+        case _:
+            return str(type(e))

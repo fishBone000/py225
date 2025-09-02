@@ -16,7 +16,7 @@ from . import udp
 from .common import UDPSession
 from .protocol import servwin
 from .protocol.transport import NonceManager, TCPTransport
-from .util import join_host_port, relay
+from .util import join_host_port, relay, conn_err_str
 
 NAME: Literal["py225"] = "py225"
 
@@ -178,8 +178,13 @@ class Py225:
         port = random.choice(ports)
         try:
             rw2 = await asyncio.open_connection(host, port)
+        except ConnectionError as e:
+            logging.warning(f"Failed to connect to server {join_host_port((host, port))} for client {addr}: {conn_err_str(e)}")
+            w.close()
+            await w.wait_closed()
+            return
         except Exception:
-            logging.warning(f"Failed to connect to server: {join_host_port((host, port))}", exc_info=True)
+            logging.warning(f"Failed to connect to server {join_host_port((host, port))} for client {addr}", exc_info=True)
             w.close()
             await w.wait_closed()
             return
@@ -188,11 +193,16 @@ class Py225:
         try:
             await relay((r, w), tp)
             logging.debug(f"Relay for TCP inbound {addr} finished.")
+        except ConnectionError as e:
+            logging.warning(f"Error occurred while relaying "
+                            f"from TCP inbound {addr} to server {join_host_port((host, port))}: {conn_err_str(e)}.")
+        except EOFError:
+            logging.warning(f"Error occurred while relaying "
+                            f"from TCP inbound {addr} to server {join_host_port((host, port))}: EOF.")
         except Exception:
             logging.warning(f"Error occurred while relaying "
-                            f"from TCP inbound {addr} to server {join_host_port((host, port))}",
+                            f"from TCP inbound {addr} to server {join_host_port((host, port))}.",
                             exc_info=True)
-            raise
         finally:
             w.close()
             await tp.close()
