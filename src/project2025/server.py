@@ -13,8 +13,8 @@ from . import config
 from . import udp
 from . import util
 from .common import UDPSession
-from .protocol import servwin
-from .protocol.transport import TCPTransport, NonceManager, UDPPacket
+from .protocol import servwin, AES_BLOCK_SIZE_BYTES, POLY1305_TAG_SIZE_BYTES
+from .protocol.transport import TCPTransport, NonceManager, UDPPacket, TCP_TRANSPORT_DENY_MSG
 from .util import join_host_port, conn_err_str
 
 NAME = "py225d"
@@ -149,6 +149,8 @@ class PortsManager:
         client_addr = join_host_port((ip, peer_port))
         logging.debug(f"New TCP connection from {client_addr} to {join_host_port((our_ip, port))}.")
         if sess is None:
+            w.write(TCP_TRANSPORT_DENY_MSG)
+            await w.drain()
             w.close()
             logging.warning(f"Denied TCP connection from {client_addr} to {join_host_port((our_ip, port))}: "
                             f"session not created for this IP.")

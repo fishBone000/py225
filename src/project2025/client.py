@@ -15,7 +15,7 @@ from . import config
 from . import udp
 from .common import UDPSession
 from .protocol import servwin
-from .protocol.transport import NonceManager, TCPTransport
+from .protocol.transport import NonceManager, TCPTransport, DeniedError
 from .util import join_host_port, relay, conn_err_str
 
 NAME: Literal["py225"] = "py225"
@@ -42,7 +42,12 @@ class Session:
         self.query_task = None
         self.next_query_task = None
 
-    def get(self) -> Task[session_info]:
+    def get(self, force=False) -> Task[session_info]:
+        if force:
+            self.next_query_task = None
+            self.query_task = create_task(self.query(), name=f"Query Task ({self.address})")
+            return self.query_task
+
         if self.query_task is None:
             self.query_task = create_task(self.query(), name=f"Query Task ({self.address})")
             return self.query_task
@@ -193,6 +198,9 @@ class Py225:
         try:
             await relay((r, w), tp)
             logging.debug(f"Relay for TCP inbound {addr} finished.")
+        except DeniedError:
+            logging.warning(f"Server denied TCP connection (client: {addr}). Trying to query service window again.")
+            server.sess.get(force=True)
         except ConnectionError as e:
             logging.warning(f"Error occurred while relaying "
                             f"from TCP inbound {addr} to server {join_host_port((host, port))}: {conn_err_str(e)}.")

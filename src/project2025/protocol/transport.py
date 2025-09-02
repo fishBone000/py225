@@ -20,6 +20,7 @@ UDP_NONCE_STEPS = 2000
 TCP_MAX_NONCE = 0x7FFFFFFF_FFFFFFFF_FFFFFFFF
 UDP_BEGIN_NONCE = 0x80000000_00000000_00000000
 UDP_MAX_NONCE = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF
+TCP_TRANSPORT_DENY_MSG = b'\x00' * (AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES)
 
 
 class UnauthenticTagError(Exception):
@@ -39,6 +40,10 @@ class UnexpectedNonceError(Exception):
 
 
 class FormatError(Exception):
+    pass
+
+
+class DeniedError(Exception):
     pass
 
 
@@ -219,6 +224,7 @@ class TCPTransport:
         :raises asyncio.IncompleteReadError: If EOF received before receiving the whole packet
         :raises BadNonceError: If nonce is invalid.
         :raises UnexpectedNonceError: If received nonce is not expected, e.g. protocol doesn't allow it.
+        :raises DeniedError: If peer denied the transport.
         """
         if self.broken:
             raise RuntimeError("broken transport")
@@ -235,6 +241,10 @@ class TCPTransport:
             except:
                 self.broken = True
                 raise
+
+            if buf == TCP_TRANSPORT_DENY_MSG:
+                self.broken = True
+                raise DeniedError
 
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = aes.decrypt(buf[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
