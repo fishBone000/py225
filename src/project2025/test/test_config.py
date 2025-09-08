@@ -40,7 +40,7 @@ class TestLoadingYamlConfig(unittest.TestCase):
     def test_client_load(self):
         default_key = gen()
         priv_keys = [default_key, gen()]
-        pub_keys = [gen(), None]
+        pub_keys = [gen().public_key(), None]
         expected = config.Client(
             [config.ServerRecord("google.com", 443, priv_keys[0], pub_keys[0]),
              config.ServerRecord("cloudflare.com", 888, priv_keys[1], pub_keys[1])
