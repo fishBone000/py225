@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 import sys
-from asyncio import Lock, create_task, Task, StreamReader, StreamWriter
+from asyncio import Lock, create_task, Task, StreamReader, StreamWriter, InvalidStateError, CancelledError
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -85,9 +85,12 @@ class Session:
 
         await asyncio.sleep(60 * 5)
 
-        if new_task.exception() is not None:
-            new_task = create_task(self.query(), name=f"Query Task ({self.address})")
-            self.next_query_task = new_task
+        try:
+            if new_task.exception() is not None:
+                new_task = create_task(self.query(), name=f"Query Task ({self.address})")
+                self.next_query_task = new_task
+        except (InvalidStateError, CancelledError): # If task not done or cancelledf
+            pass
 
     async def query(self) -> session_info:
         logging.info(f"Begin querying service window from {self.address[0]} port {self.address[1]}.")

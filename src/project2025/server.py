@@ -339,6 +339,7 @@ class Py225d:
             raise
 
     async def run(self):
+        logging.info("py225d start up")
         coros = [self.port_mng.run(), self.listen_serv_win_query()]
         await asyncio.gather(*coros)
 

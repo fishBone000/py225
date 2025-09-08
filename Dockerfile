@@ -18,6 +18,13 @@ conda create -y -n env python=3.13.5
 conda activate env
 echo Conda activated
 pip install -r requirements.txt
+EOF
+
+RUN <<EOF
+source ~/miniconda3/bin/activate
+conda activate env
 pyinstaller src/py225d.py
 pyinstaller src/py225.py
+pyinstaller --distpath ./dist-onefile --onefile src/py225d.py
+pyinstaller --distpath ./dist-onefile --onefile
 EOF
