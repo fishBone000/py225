@@ -307,9 +307,8 @@ class TCPTransport:
 
         return plain
 
-    async def close(self):
+    def close(self):
         self.w.close()
-        await self.w.wait_closed()
 
 
 # TODO: Enhance exception handling for NonceManager in py225 and py225d

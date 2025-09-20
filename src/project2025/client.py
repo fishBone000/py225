@@ -23,9 +23,8 @@ NAME: Literal["py225"] = "py225"
 
 class Session:
     type session_info = tuple[datetime, list[int], NonceManager, NonceManager, bytes, bytes]
-    expire: datetime
+    expire: datetime | None = None
 
-    lock: Lock
     query_task: Task[session_info] | None
     next_query_task: Task[session_info] | None
     timer_task: Task
@@ -34,11 +33,9 @@ class Session:
 
     def __init__(self, address: tuple[str, int], private_key: EccKey, host_public_key: EccKey):
         super().__init__()
-        self.ready = False
         self.address = address
         self.private_key = private_key
         self.host_public_key = host_public_key
-        self.lock = Lock()
         self.query_task = None
         self.next_query_task = None
 
@@ -52,9 +49,12 @@ class Session:
             self.query_task = create_task(self.query(), name=f"Query Task ({self.address})")
             return self.query_task
         else:
-            if not self.query_task.done() or self.query_task.exception() is None and not self.expired():
+            # If query_task is running or done successfully
+            if (not self.query_task.done()
+                    or not self.query_task.cancelled() and self.query_task.exception() is None and not self.expired()):
                 return self.query_task
-            if self.next_query_task and (not self.next_query_task.done() or self.next_query_task.exception() is None):
+            nqt = self.next_query_task
+            if nqt and (not nqt.done() or not nqt.cancelled() and nqt.exception() is None) and not self.expired():
                 self.query_task = self.next_query_task
                 self.next_query_task = None
                 return self.query_task
@@ -72,24 +72,24 @@ class Session:
         self.get()
 
     def expired(self):
-        assert self.query_task.done() and self.query_task.exception() is None
-        return (datetime.now() - self.expire).total_seconds() >= 0
+        return self.expire is not None and (datetime.now() - self.expire).total_seconds() >= 0
 
     async def expire_timer(self):
         exp = self.expire
 
         await asyncio.sleep((exp - timedelta(minutes=10) - datetime.now()).total_seconds())
 
+        logging.debug(f"10 min before session expire, creating query task.")
         new_task = create_task(self.query(), name=f"Query Task ({self.address})")
         self.next_query_task = new_task
 
-        await asyncio.sleep(60 * 5)
+        await asyncio.sleep(60 * 5 - 30)
 
         try:
             if new_task.exception() is not None:
                 new_task = create_task(self.query(), name=f"Query Task ({self.address})")
                 self.next_query_task = new_task
-        except (InvalidStateError, CancelledError): # If task not done or cancelledf
+        except (InvalidStateError, CancelledError): # If task not done or cancelled
             pass
 
     async def query(self) -> session_info:
@@ -110,8 +110,6 @@ class Session:
                 self.next_query_task = None
                 self.expire = ts
                 self.timer_task = create_task(self.expire_timer(), name="Expire Timer")
-
-                await w.wait_closed()
 
                 return ts, ports, NonceManager.new("tcp"), NonceManager.new("udp"), k1, k2
             except (TimeoutError, EOFError) as e:
@@ -179,7 +177,6 @@ class Py225:
         except Exception:
             logging.warning(f"Closing TCP inbound {addr}, service window not ready")
             w.close()
-            await w.wait_closed()
             return
 
         _, ports, mng, _, k1, k2 = res
@@ -189,12 +186,10 @@ class Py225:
         except ConnectionError as e:
             logging.warning(f"Failed to connect to server {join_host_port((host, port))} for client {addr}: {conn_err_str(e)}")
             w.close()
-            await w.wait_closed()
             return
         except Exception:
             logging.warning(f"Failed to connect to server {join_host_port((host, port))} for client {addr}", exc_info=True)
             w.close()
-            await w.wait_closed()
             return
 
         tp = TCPTransport(rw2, k1, k2, mng)
@@ -216,8 +211,7 @@ class Py225:
                             exc_info=True)
         finally:
             w.close()
-            await tp.close()
-            await w.wait_closed()
+            tp.close()
 
     def on_udp_session_close(self, sess: UDPSession):
         self.udp_sessions.pop(sess.app_addr)
