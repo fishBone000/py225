@@ -91,7 +91,7 @@ class PortsManager:
         return ports
 
     def get_open_ports(self) -> set[int]:
-        return set(self.tcp_tasks.keys())
+        return self.next_ports or set(self.tcp_tasks.keys())
 
     def is_in_transit(self) -> bool:
         return self.next_ports is not None
