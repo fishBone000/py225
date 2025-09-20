@@ -16,7 +16,7 @@ from . import udp
 from .common import UDPSession
 from .protocol import servwin
 from .protocol.transport import NonceManager, TCPTransport, DeniedError
-from .util import join_host_port, relay, conn_err_str
+from .util import join_host_port, relay, conn_err_str, set_no_delay
 
 NAME: Literal["py225"] = "py225"
 
@@ -170,6 +170,7 @@ class Py225:
     async def handle_tcp(self, r: StreamReader, w: StreamWriter):
         addr = join_host_port(w.get_extra_info("peername"))
         logging.debug(f"Inbound TCP from {addr}")
+        set_no_delay(w)
 
         server, (host, _) = self.choose_server()
         try:

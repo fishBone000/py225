@@ -13,9 +13,9 @@ from . import config
 from . import udp
 from . import util
 from .common import UDPSession
-from .protocol import servwin, AES_BLOCK_SIZE_BYTES, POLY1305_TAG_SIZE_BYTES
+from .protocol import servwin
 from .protocol.transport import TCPTransport, NonceManager, UDPPacket, TCP_TRANSPORT_DENY_MSG
-from .util import join_host_port, conn_err_str
+from .util import join_host_port, conn_err_str, set_no_delay
 
 NAME = "py225d"
 
@@ -145,6 +145,7 @@ class PortsManager:
         cfg = self.py225d.config
         ip, peer_port = w.get_extra_info("peername")
         our_ip, port = w.get_extra_info("sockname")
+        set_no_delay(w)
         sess = self.py225d.sess_mng.get_session(ip)
         client_addr = join_host_port((ip, peer_port))
         logging.debug(f"New TCP connection from {client_addr} to {join_host_port((our_ip, port))}.")
@@ -294,6 +295,7 @@ class Py225d:
 
     async def handle_serv_win_query(self, r: StreamReader, w: StreamWriter):
         addr = join_host_port(w.get_extra_info("peername"))
+        set_no_delay(w)
         try:
             logging.info(f"Incoming service window query from {addr}.")
 
@@ -347,6 +349,7 @@ def main():
         asyncio.run(instance.run())
     except KeyboardInterrupt:
         pass
+
 
 if __name__ == '__main__':
     main()

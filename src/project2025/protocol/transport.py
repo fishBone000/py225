@@ -1,5 +1,7 @@
 import asyncio
+import logging
 import os
+import socket
 from asyncio import StreamReader, StreamWriter
 from dataclasses import dataclass
 from typing import Literal
@@ -143,6 +145,7 @@ class TCPTransport:
         if len(k_1) is not CHACHA20_KEY_SIZE_BYTES or len(k_2) is not CHACHA20_KEY_SIZE_BYTES:
             raise ValueError(f"size of k_1 and k_2 must be {CHACHA20_KEY_SIZE_BYTES} bytes")
         self.r, self.w = rw
+
         self.k_1 = k_1
         self.k_2 = k_2
         self.mng = mng
@@ -157,6 +160,16 @@ class TCPTransport:
             self.rcv_nonce = None
             self.initial_rcv_nonce = None
         self.broken = False
+
+    def set_no_delay(self):
+        s = self.w.get_extra_info("socket")
+
+        try:
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            logging.warning(f"Set no delay failed.", exc_info=True)
+
 
     async def sendall(self, b: bytes):
         """

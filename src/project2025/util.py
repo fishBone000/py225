@@ -1,4 +1,8 @@
+import asyncio
+import logging
+import socket
 from asyncio import StreamReader, StreamWriter, TaskGroup
+from sys import exc_info
 
 from .protocol.transport import TCPTransport, TCP_TRANSPORT_MAX_SIZE_BYTES
 
@@ -56,3 +60,12 @@ def conn_err_str(e: ConnectionError) -> str:
             return "broken pipe"
         case _:
             return str(type(e))
+
+def set_no_delay(w: asyncio.StreamWriter):
+    s = w.get_extra_info("socket")
+
+    try:
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 0)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except Exception:
+        logging.warning(f"Set no delay for socket failed.", exc_info=True)
