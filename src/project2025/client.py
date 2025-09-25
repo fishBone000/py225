@@ -93,7 +93,7 @@ class Session:
             pass
 
     async def query(self) -> session_info:
-        logging.info(f"Begin querying service window from {self.address[0]} port {self.address[1]}.")
+        logging.info(f"Begin querying service window from {join_host_port(self.address)}.")
         for retry in range(self.MAX_RETRIES + 1):
             try:
                 r, w = await asyncio.open_connection(*self.address)
@@ -102,7 +102,11 @@ class Session:
                                                                  self.host_public_key)
                 w.close()
                 ts = datetime.now() + timedelta(seconds=expire)
-                logging.info(f"Query service window from {self.address[0]} port {self.address[1]} success")
+                logging.info(f"Query service window from {join_host_port(self.address)} success")
+                ports_str = ""
+                for i in range(0, len(ports), 10):
+                    ports_str += ",".join((str(p) for p in ports[i:min(i+10, len(ports))])) + ",\n"
+                logging.debug(f"Session expires in {expire} seconds.\nPorts:\n{ports_str[:-2]}")
 
                 zis_task = asyncio.current_task()
                 assert zis_task is not None
@@ -110,6 +114,8 @@ class Session:
                 self.next_query_task = None
                 self.expire = ts
                 self.timer_task = create_task(self.expire_timer(), name="Expire Timer")
+
+
 
                 return ts, ports, NonceManager.new("tcp"), NonceManager.new("udp"), k1, k2
             except (TimeoutError, EOFError) as e:

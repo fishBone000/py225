@@ -97,10 +97,18 @@ class PortsManager:
         return self.next_ports is not None
 
     async def timer(self):
+        def ports_str(ports: list[int]) -> str:
+            res = ""
+            for i in range(0, len(ports), 10):
+                res += ",".join((str(port) for port in ports[i:min(i + 10, len(ports))])) + "\n"
+            return res[:-1]
+
         try:
-            for p in self.gen_random_ports():
+            ports = self.gen_random_ports()
+            for p in ports:
                 self.tcp_tasks[p] = create_task(self.listen_tcp(p))
                 self.udp_tasks[p] = create_task(self.listen_udp(p))
+            logging.debug(f"Started handlers on ports:\n{ports_str(list(ports))}")
 
             while True:
                 duration = random.uniform(*self.duration_range)
@@ -109,11 +117,13 @@ class PortsManager:
                 await asyncio.sleep((ts - timedelta(minutes=30) - datetime.now()).total_seconds())
 
                 self.next_ports = self.gen_random_ports()
+                logging.debug(f"Ports of next service window:\n{ports_str(list(self.next_ports))}")
                 new = self.next_ports.difference(self.tcp_tasks.keys())
                 for p in new:
                     self.tcp_tasks[p] = create_task(self.listen_tcp(p))
                     if p not in self.udp_tasks:
                         self.udp_tasks[p] = create_task(self.listen_udp(p))
+                logging.debug(f"Started handlers for next service window:\n{ports_str(list(new))}")
 
                 await asyncio.sleep(30 * 60)
 
@@ -122,24 +132,30 @@ class PortsManager:
                     self.tcp_tasks[p].cancel()
                     # We don't cancel UDP task here, the tasks are cancelled when all bond UDP sessions ended.
                 self.next_ports = None
+                logging.debug(f"Closed handlers for old service window:\n{ports_str(list(close))}")
         except Exception:
             logging.exception("Unexpected error occurred!")
             raise
 
     async def listen_tcp(self, port: int):
-        cfg = self.py225d.config
         try:
-            s = await asyncio.start_server(self.handle_tcp, cfg.listen_ip, port)
-        except Exception:
-            logging.exception(f"Open TCP port {port} for data inbound failed.")
-            return
+            cfg = self.py225d.config
+            try:
+                s = await asyncio.start_server(self.handle_tcp, cfg.listen_ip, port)
+            except Exception:
+                logging.exception(f"Open TCP port {port} for data inbound failed.")
+                return
 
-        try:
-            async with s:
-                await s.serve_forever()
-        except Exception:
-            logging.exception(f"Serve TCP port {port} failed.")
-            return
+            logging.debug(f"TCP port {port} opened.")
+
+            try:
+                async with s:
+                    await s.serve_forever()
+            except Exception:
+                logging.exception(f"Serve TCP port {port} failed.")
+                return
+        finally:
+            self.tcp_tasks.pop(port)
 
     async def handle_tcp(self, r: StreamReader, w: StreamWriter):
         cfg = self.py225d.config
