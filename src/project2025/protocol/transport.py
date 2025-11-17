@@ -187,7 +187,7 @@ class TCPTransport:
             raise RuntimeError("broken transport")
         if self.snd_nonce is not None and self.snd_nonce - self.initial_snd_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
-            await self.close()
+            self.close()
             raise NonceDepletedError
 
         data = b''
@@ -197,7 +197,7 @@ class TCPTransport:
                 self.initial_snd_nonce = self.snd_nonce = self.mng.gen_send()
             except NonceDepletedError:
                 self.broken = True
-                await self.close()
+                self.close()
                 raise
             aes = AES.new(self.k_1, mode=AES.MODE_ECB)
             nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
@@ -243,7 +243,7 @@ class TCPTransport:
             raise RuntimeError("broken transport")
         if self.rcv_nonce is not None and self.rcv_nonce - self.initial_rcv_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
-            await self.close()
+            self.close()
             raise NonceDepletedError
 
         ciphertext = b''
@@ -266,7 +266,7 @@ class TCPTransport:
                                     data=buf[:AES_BLOCK_SIZE_BYTES]).digest()
             if not timingsafe_bcmp(tag, expected):
                 self.broken = True
-                await self.close()
+                self.close()
                 raise UnauthenticTagError
 
             nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
@@ -274,7 +274,7 @@ class TCPTransport:
                 self.mng.check_recv(nonce)
             except (BadNonceError, UnexpectedNonceError):
                 self.broken = True
-                await self.close()
+                self.close()
                 raise
             self.initial_rcv_nonce = self.rcv_nonce = nonce + 1
 
@@ -295,7 +295,7 @@ class TCPTransport:
         packet_sz = int.from_bytes(header_chacha.decrypt(header), byteorder="big", signed=False)
         if packet_sz == 0:
             self.broken = True
-            await self.close()
+            self.close()
             raise FormatError
 
         try:
@@ -310,7 +310,7 @@ class TCPTransport:
         expected_tag = Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=ciphertext).digest()
         if not timingsafe_bcmp(tag, expected_tag):
             self.broken = True
-            await self.close()
+            self.close()
             raise UnauthenticTagError
 
         data_chacha = ChaCha20.new(key=self.k_2, nonce=nonce_buf)
