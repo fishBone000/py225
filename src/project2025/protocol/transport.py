@@ -3,6 +3,7 @@ import logging
 import os
 import socket
 from asyncio import StreamReader, StreamWriter
+from bdb import effective
 from dataclasses import dataclass
 from typing import Literal
 
@@ -11,6 +12,16 @@ from Crypto.Hash import Poly1305
 
 from . import CHACHA20_NONCE_SIZE_BYTES, AES_BLOCK_SIZE_BYTES, POLY1305_TAG_SIZE_BYTES, CHACHA20_KEY_SIZE_BYTES
 from .util import timingsafe_bcmp
+
+'''
+TCP Transport protocol:
+First packet to peer:
+ | Random Padded | Nonce | Poly1305 |
+ |     Full AES Block    |
+Following data packets:
+ | Header (packet sz) | Data | Poly1305 |
+Both header and data is encrypted with ChaCha20  
+'''
 
 HEADER_SIZE_BYTES = 4
 TCP_TRANSPORT_MAX_SIZE_BYTES = 0xFFFFFFFF
@@ -23,6 +34,8 @@ TCP_MAX_NONCE = 0x7FFFFFFF_FFFFFFFF_FFFFFFFF
 UDP_BEGIN_NONCE = 0x80000000_00000000_00000000
 UDP_MAX_NONCE = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF
 TCP_TRANSPORT_DENY_MSG = b'\x00' * (AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES)
+TCP_TRANSPORT_EOF_MSG = b'\x00'
+TCP_TRANSPORT_ERR_MSG = b'\x01'
 
 
 class UnauthenticTagError(Exception):
@@ -48,6 +61,8 @@ class FormatError(Exception):
 class DeniedError(Exception):
     pass
 
+class RemoteError(Exception):
+    pass
 
 class NonceManager:
     def __init__(self, step_sz, steps, begin_nonce, max_nonce):
@@ -160,6 +175,12 @@ class TCPTransport:
             self.rcv_nonce = None
             self.initial_rcv_nonce = None
         self.broken = False
+        self.close_called = False
+
+    def __del__(self):
+        if not self.close_called:
+            logging.warning("TCP transport instance garbage collected without closing")
+        self.w.close()
 
     def set_no_delay(self):
         s = self.w.get_extra_info("socket")
@@ -179,46 +200,55 @@ class TCPTransport:
         :raises RuntimeError: If the transport is broken, e.g. there was a previous error.
         :raises NonceDepletedError: If nonce is depleted for this TCP connection or client-server session.
         """
-        if len(b) > TCP_TRANSPORT_MAX_SIZE_BYTES:
+        await self._send_packet(b)
+
+    def _gen_nonce_packet(self):
+        packet = b''
+        try:
+            self.initial_snd_nonce = self.snd_nonce = self.mng.gen_send()
+        except NonceDepletedError:
+            self.broken = True
+            self.force_close()
+            raise
+        aes = AES.new(self.k_1, mode=AES.MODE_ECB)
+        nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
+        packet += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
+        packet += Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf, data=packet).digest()
+
+        self.snd_nonce += 1
+        return packet
+
+    async def _send_packet(self, data, is_ctrl=False):
+        if len(data) > TCP_TRANSPORT_MAX_SIZE_BYTES:
             raise ValueError("packet too large")
-        if not b:
-            raise ValueError("Packet size cannot be zero.")
+        if len(data) == 0:
+            raise ValueError("Packet cannot be empty.")
         if self.broken:
             raise RuntimeError("broken transport")
         if self.snd_nonce is not None and self.snd_nonce - self.initial_snd_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
-            self.close()
+            self.force_close()
             raise NonceDepletedError
 
-        data = b''
-        # If it's the first packet, generate a nonce and send encrypted nonce first
+        buf = b''
         if self.snd_nonce is None:
-            try:
-                self.initial_snd_nonce = self.snd_nonce = self.mng.gen_send()
-            except NonceDepletedError:
-                self.broken = True
-                self.close()
-                raise
-            aes = AES.new(self.k_1, mode=AES.MODE_ECB)
-            nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
-            data += aes.encrypt(os.urandom(AES_BLOCK_SIZE_BYTES - CHACHA20_NONCE_SIZE_BYTES) + nonce_buf)
-            data += Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf, data=data).digest()
-
-            self.snd_nonce += 1
-
-        begin_sign = len(data)
+            buf += self._gen_nonce_packet()
+        begin_sign = len(buf)
 
         # Encrypt the packet
         nonce_buf = self.snd_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big")
         header_chacha = ChaCha20.new(key=self.k_1, nonce=nonce_buf)
         data_chacha = ChaCha20.new(key=self.k_2, nonce=nonce_buf)
 
-        data += header_chacha.encrypt(len(b).to_bytes(HEADER_SIZE_BYTES, byteorder="big"))
-        data += data_chacha.encrypt(b)
-        data += Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=data[begin_sign:]).digest()
+        if is_ctrl:
+            buf += header_chacha.encrypt((0).to_bytes(HEADER_SIZE_BYTES, byteorder="big"))
+        else:
+            buf += header_chacha.encrypt(len(data).to_bytes(HEADER_SIZE_BYTES, byteorder="big"))
+        buf += data_chacha.encrypt(data)
+        buf += Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=buf[begin_sign:]).digest()
 
         try:
-            self.w.write(data)
+            self.w.write(buf)
             await self.w.drain()
         except:
             self.broken = True
@@ -228,7 +258,7 @@ class TCPTransport:
 
     async def recv(self) -> bytes:
         """
-        Receives single packet.
+        Receives single packet. Returns empty bytes if peer closed transport normally.
         :return: Data in packet. Zero length ``bytes`` if EOF received.
         :raises RuntimeError: If transport is broken, e.g. there was a previous error.
         :raises FormatError: If received packet has zero length size.
@@ -238,46 +268,62 @@ class TCPTransport:
         :raises BadNonceError: If nonce is invalid.
         :raises UnexpectedNonceError: If received nonce is not expected, e.g. protocol doesn't allow it.
         :raises DeniedError: If peer denied the transport.
+        :raises RemoteError: If peer closed the transport due to an error.
+        :raises IncompleteReadError: If connection is lost.
         """
+        plain, is_ctrl = await self._recv_packet()
+        if is_ctrl:
+            if len(plain) != 1:
+                raise FormatError(f"Expected control message to be 1 Byte long")
+            if plain == TCP_TRANSPORT_EOF_MSG:
+                return b""
+            if plain == TCP_TRANSPORT_ERR_MSG:
+                raise RemoteError("Peer closed transport due to an error")
+            raise FormatError(f"Unknown control code {hex(plain[0])}")
+        return plain
+
+    async def _recv_nonce(self):
+        try:
+            buf = await self.r.readexactly(AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES)
+        except:
+            self.broken = True
+            raise
+
+        if buf == TCP_TRANSPORT_DENY_MSG:
+            self.broken = True
+            raise DeniedError
+
+        aes = AES.new(self.k_1, mode=AES.MODE_ECB)
+        nonce_buf = aes.decrypt(buf[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
+        tag = buf[-POLY1305_TAG_SIZE_BYTES:]
+        expected = Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf,
+                                data=buf[:AES_BLOCK_SIZE_BYTES]).digest()
+        if not timingsafe_bcmp(tag, expected):
+            self.broken = True
+            self.force_close()
+            raise UnauthenticTagError
+
+        nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
+        try:
+            self.mng.check_recv(nonce)
+        except (BadNonceError, UnexpectedNonceError):
+            self.broken = True
+            self.force_close()
+            raise
+        self.initial_rcv_nonce = self.rcv_nonce = nonce + 1
+
+    async def _recv_packet(self) -> tuple[bytes, bool]:
         if self.broken:
             raise RuntimeError("broken transport")
         if self.rcv_nonce is not None and self.rcv_nonce - self.initial_rcv_nonce >= TCP_NONCE_STEP_SZ:
             self.broken = True
-            self.close()
+            self.force_close()
             raise NonceDepletedError
 
-        ciphertext = b''
-        # If it's the first packet, receive encrypted nonce first
         if self.rcv_nonce is None:
-            try:
-                buf = await self.r.readexactly(AES_BLOCK_SIZE_BYTES + POLY1305_TAG_SIZE_BYTES)
-            except:
-                self.broken = True
-                raise
+            await self._recv_nonce()
 
-            if buf == TCP_TRANSPORT_DENY_MSG:
-                self.broken = True
-                raise DeniedError
-
-            aes = AES.new(self.k_1, mode=AES.MODE_ECB)
-            nonce_buf = aes.decrypt(buf[:AES_BLOCK_SIZE_BYTES])[-CHACHA20_NONCE_SIZE_BYTES:]
-            tag = buf[-POLY1305_TAG_SIZE_BYTES:]
-            expected = Poly1305.new(key=self.k_1, cipher=ChaCha20, nonce=nonce_buf,
-                                    data=buf[:AES_BLOCK_SIZE_BYTES]).digest()
-            if not timingsafe_bcmp(tag, expected):
-                self.broken = True
-                self.close()
-                raise UnauthenticTagError
-
-            nonce = int.from_bytes(nonce_buf, byteorder="big", signed=False)
-            try:
-                self.mng.check_recv(nonce)
-            except (BadNonceError, UnexpectedNonceError):
-                self.broken = True
-                self.close()
-                raise
-            self.initial_rcv_nonce = self.rcv_nonce = nonce + 1
-
+        ciphertext = b''
         nonce_buf = self.rcv_nonce.to_bytes(CHACHA20_NONCE_SIZE_BYTES, byteorder="big", signed=False)
         header_chacha = ChaCha20.new(key=self.k_1, nonce=nonce_buf)
         try:
@@ -286,31 +332,32 @@ class TCPTransport:
             if self.initial_rcv_nonce == self.rcv_nonce or e.partial:
                 raise
             self.broken = True  # Transport is actually closed, setting as broken anyway
-            return b""
+            return b"", False
         except Exception:
             self.broken = True
             raise
 
         ciphertext += header
         packet_sz = int.from_bytes(header_chacha.decrypt(header), byteorder="big", signed=False)
-        if packet_sz == 0:
-            self.broken = True
-            self.close()
-            raise FormatError
+        is_ctrl = packet_sz == 0
+        eff_pkt_sz = 1 if is_ctrl else packet_sz
 
         try:
-            data = await self.r.readexactly(packet_sz + POLY1305_TAG_SIZE_BYTES)
+            if is_ctrl:
+                data = await self.r.readexactly(1 + POLY1305_TAG_SIZE_BYTES)
+            else:
+                data = await self.r.readexactly(packet_sz + POLY1305_TAG_SIZE_BYTES)
         except Exception:
             self.broken = True
             raise
-        payload = data[:packet_sz]
-        tag = data[packet_sz:]
+        payload = data[:eff_pkt_sz]
+        tag = data[eff_pkt_sz:]
         ciphertext += payload
 
         expected_tag = Poly1305.new(key=self.k_2, cipher=ChaCha20, nonce=nonce_buf, data=ciphertext).digest()
         if not timingsafe_bcmp(tag, expected_tag):
             self.broken = True
-            self.close()
+            await self.close(no_ctrl=True)
             raise UnauthenticTagError
 
         data_chacha = ChaCha20.new(key=self.k_2, nonce=nonce_buf)
@@ -318,10 +365,25 @@ class TCPTransport:
 
         self.rcv_nonce += 1
 
-        return plain
+        return plain, is_ctrl
 
-    def close(self):
+    async def close(self, is_err=False, no_ctrl=False):
+        if self.close_called:
+            return
+        try:
+            if not no_ctrl:
+                if is_err:
+                    await self._send_packet(TCP_TRANSPORT_ERR_MSG, True)
+                else:
+                    await self._send_packet(TCP_TRANSPORT_EOF_MSG, True)
+                await self.w.drain()
+        finally:
+            self.w.close()
+            self.close_called = True
+
+    def force_close(self):
         self.w.close()
+        self.close_called = True
 
 
 # TODO: Enhance exception handling for NonceManager in py225 and py225d

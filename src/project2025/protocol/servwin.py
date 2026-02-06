@@ -54,6 +54,8 @@ async def query(rw: tuple[StreamReader, StreamWriter],
     data = await tp.recv()
     (exp, ports) = parse(data)
 
+    await tp.close(no_ctrl=True)
+
     return exp, ports, k1, k2, host_pub_key
 
 
@@ -79,5 +81,7 @@ async def feed(rw: tuple[StreamReader, StreamWriter],
         raise RuntimeError("Authenticate failed: client public key not in allow list")
 
     await tp.sendall(build(sec_til_expire, ports))
+
+    await tp.close(no_ctrl=True)
 
     return k1, k2, sec_til_expire

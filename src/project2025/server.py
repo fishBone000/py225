@@ -180,11 +180,11 @@ class PortsManager:
             r1, w1 = await asyncio.open_connection(cfg.connect_host, cfg.connect_port)
         except ConnectionError as e:
             logging.warning(f"Connect to target host for client {client_addr} failed: {conn_err_str(e)}.")
-            tp.close()
+            await tp.close(True)
             return
         except Exception:
             logging.warning(f"Connect to target host for client {client_addr} failed.", exc_info=True)
-            tp.close()
+            await tp.close(True)
             return
 
         try:
@@ -192,13 +192,16 @@ class PortsManager:
             logging.debug(f"Relay for client {join_host_port((ip, peer_port))} finished.")
         except ConnectionError as e:
             logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed: {conn_err_str(e)}.")
+            await tp.close(True)
         except EOFError:
             logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed: EOF.")
+            await tp.close(True)
         except Exception:
             logging.warning(f"Relay for client {join_host_port((ip, peer_port))} failed.", exc_info=True)
+            await tp.close(True)
         finally:
-            w.close()
-            tp.close()
+            # w.close()
+            await tp.close()
 
     def on_udp_session_close(self, sess: UDPSession):
         self.udp_sessions_by_client_addr.pop(sess.client_addr)

@@ -190,6 +190,11 @@ class Py225:
         port = random.choice(ports)
         try:
             rw2 = await asyncio.open_connection(host, port)
+        except ConnectionRefusedError as e:
+            logging.warning(f"Failed to connect to server {join_host_port((host, port))} for client {addr}: connection refused")
+            logging.warning(f"Trying to query service window aagain.")
+            server.sess.get(force=True)
+            return
         except ConnectionError as e:
             logging.warning(f"Failed to connect to server {join_host_port((host, port))} for client {addr}: {conn_err_str(e)}")
             w.close()
@@ -209,16 +214,19 @@ class Py225:
         except ConnectionError as e:
             logging.warning(f"Error occurred while relaying "
                             f"from TCP inbound {addr} to server {join_host_port((host, port))}: {conn_err_str(e)}.")
+            await tp.close(is_err=True)
         except EOFError:
             logging.warning(f"Error occurred while relaying "
                             f"from TCP inbound {addr} to server {join_host_port((host, port))}: EOF.")
+            await tp.close(is_err=True)
         except Exception:
             logging.warning(f"Error occurred while relaying "
                             f"from TCP inbound {addr} to server {join_host_port((host, port))}.",
                             exc_info=True)
+            await tp.close(is_err=True)
         finally:
             w.close()
-            tp.close()
+            await tp.close()
 
     def on_udp_session_close(self, sess: UDPSession):
         self.udp_sessions.pop(sess.app_addr)
